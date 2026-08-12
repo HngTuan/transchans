@@ -1356,29 +1356,35 @@ ${outro}`;
   function buildTranslatePrompt(text, sourceLang, targetLang) {
     const sourceName = LANG_NAMES[sourceLang] || sourceLang;
     const targetName = LANG_NAMES[targetLang] || targetLang;
-    return `You are a professional translator with 20+ years of experience translating comics from ${sourceName} to ${targetName}.
+    
+    return `You are an elite comic localizer and master translator with 20+ years of experience translating from ${sourceName} to ${targetName}.
 
 Below is the OCR text scanned from a comic page, along with the image of that same page. EACH LINE is a separate speech bubble / text box.
 
 OCR text:
 ${text}
 
-TRANSLATION INSTRUCTIONS:
-1. Translate the OCR content into ${targetName} accurately.
-2. IMPORTANT: use the IMAGE and the page's CONTEXT to translate with the correct meaning.
-3. The number of lines in your translation MUST exactly match the number of lines in the source text.
-4. EVERY line in the source text must correspond to EXACTLY ONE line in the translation - never merge or split lines.
-5. Use NATURAL phrasing suited to the comic genre, with modern, easy-to-understand wording.
-6. Convey the correct emotion and context of each bubble.
-7. Translate honorifics and forms of address that reflect the relationship between characters accurately (if ${targetName} has such forms).
-8. If a line is a standalone sound-effect/SFX word (not a full sentence, e.g. BANG, THUD, BOOM, meow...), translate/transliterate it BRIEFLY into an equivalent in ${targetName} that keeps the spirit of a sound effect - do not translate it literally as if it were a normal long sentence.
-9. Count the lines in the source text and make sure your translation has exactly that many lines.
-10. IMPORTANT ABOUT CAPITALIZATION: the source OCR text may be entirely in UPPERCASE letters (this is usually just how the comic's font is set, NOT because the character is shouting) - this is NOT a formatting choice you need to preserve. Your translation MUST use normal sentence case: capitalize only the first letter of each sentence and proper nouns (character names, place names, etc.) following the normal spelling conventions of ${targetName}. Do NOT capitalize an entire word/sentence just because the source text was uppercase.
-11. IMPORTANT ABOUT THE JAPANESE WAVE DASH "〜" (or "～"): this character indicates a drawn-out, elongated, or sing-song trailing sound (e.g. cheerful, playful, or teasing tone) - it does NOT mean hesitation, trailing off in thought, or an unfinished sentence. Do NOT translate/replace it with an ellipsis "...", since an ellipsis in ${targetName} usually implies hesitation or a pause, which changes the tone. Instead, either keep the "〜" mark itself at the end of the line, or render the elongated sound using ${targetName}'s own natural way of showing a drawn-out/stretched word ending (for example, by lengthening the last vowel/sound), whichever reads more naturally.
-12. NEVER write a placeholder note/marker for a line (such as "(blank)", "(empty)", "(bỏ trống)", "(để trống)", "(no text)", "N/A"...) - if a line genuinely has nothing to translate, leave that line as a truly empty line (zero characters) instead of writing any word/note about it.
+--- MENTAL CONTEXT ANALYSIS (DO THIS SILENTLY BEFORE TRANSLATING) ---
+To achieve a perfect localization, mentally analyze the IMAGE and the TEXT using this framework:
+1. VISUAL CUES: What is happening in the panel? Are they fighting, whispering, or running? (Use the art to resolve ambiguous pronouns like "it", "this", or dropped subjects).
+2. CHARACTER DYNAMICS: Who is speaking to whom? What is their age difference and relationship? (Crucial for choosing the exact correct pronouns, honorifics, and politeness levels in ${targetName}).
+3. EMOTIONAL TONE: Read the facial expressions. Is the tone sarcastic, terrified, casual, or formal?
+
+--- TRANSLATION INSTRUCTIONS ---
+1. DYNAMIC EQUIVALENCE: Do not translate word-for-word. Translate the *contextual meaning*. Your output must sound exactly like what a native ${targetName} speaker would naturally say in this specific situation. Keep the dialogue punchy, concise, and direct.
+2. ADAPTATION & SFX: Adapt idioms and jokes to ${targetName} equivalents. If a line is a standalone sound-effect/SFX word (e.g. BANG, THUD, meow), translate/transliterate it BRIEFLY into an equivalent in ${targetName} that keeps the spirit of a sound effect.
+3. CAPITALIZATION: The source OCR text may be entirely in UPPERCASE letters, but your translation MUST use normal sentence case following the normal spelling conventions of ${targetName}. Do NOT capitalize an entire word/sentence just because the source text was uppercase.
+4. THE JAPANESE WAVE DASH "〜" (or "～"): This indicates a drawn-out, elongated sound. Do NOT translate/replace it with an ellipsis "...", since that implies hesitation. Instead, render the elongated sound naturally (e.g., by lengthening the last vowel/sound).
+5. STRICT FORMATTING (MANDATORY):
+   - The number of lines in your translation MUST exactly match the number of lines in the OCR text.
+   - EVERY line in the source must correspond to EXACTLY ONE line in the translation (never merge or split lines).
+   - NEVER write a placeholder note/marker (such as "(blank)", "(empty)", "N/A"). If a line genuinely has nothing to translate, leave that line as a truly empty line.
+   - NEVER output your "Mental Context Analysis" text. Output ONLY the final translated lines.
+
 ${getStyleGuideBlock(targetName, 'translate')}
-Return ONLY the translation. Do not add any explanation or notes.`;
-  }
+
+Return ONLY the final translation. Do not add any explanation or notes.`;
+}
 
   // ---------- Refine OCR (doc lap hoan toan voi buildOcrPrompt/buildTranslatePrompt o tren) ----------
   // Muc dich: gui LAI anh + ban OCR HIEN CO cho Gemini, yeu cau doi chieu
