@@ -1,0 +1,358 @@
+/* vb-batch.js — Dich hang loat nhieu chuong tu file .zip */
+(() => {
+  'use strict';
+  const VB = window.VB;
+  const $ = id => document.getElementById(id);
+
+  /** chapters: [{id, name, images:[{name, path, entry}], selected, status, done, total, pages:[], error}] */
+  let chapters = [];
+  let running = false, stopFlag = false;
+  let totalUnits = 0, doneUnits = 0;
+
+  // ---------- nap zip ----------
+  const IMG_RE = /\.(png|jpe?g|webp|heic|heif|bmp|gif)$/i;
+
+  async function loadZips(files) {
+    if (typeof JSZip === 'undefined') return alert('Thiếu jszip.min.js');
+    setStatus('Đang đọc file zip…');
+    const map = new Map();
+
+    for (const file of files) {
+      let zip;
+      try { zip = await JSZip.loadAsync(file); }
+      catch (e) { alert(`Không đọc được ${file.name}: ${e.message}`); continue; }
+
+      zip.forEach((path, entry) => {
+        if (entry.dir) return;
+        if (/(^|\/)__MACOSX\//.test(path) || /(^|\/)\._/.test(path)) return;
+        if (!IMG_RE.test(path)) return;
+        const segs = path.split('/').filter(Boolean);
+        const fname = segs.pop();
+        const chapName = segs.length ? segs.join(' / ') : '(gốc)';
+        const key = `${files.length > 1 ? file.name.replace(/\.zip$/i, '') + ' :: ' : ''}${chapName}`;
+        if (!map.has(key)) map.set(key, []);
+        map.get(key).push({ name: fname, path, entry });
+      });
+    }
+
+    chapters = Array.from(map.entries())
+      .sort((a, b) => VB.naturalCompare(a[0], b[0]))
+      .map(([name, imgs], i) => ({
+        id: 'ch' + i,
+        name,
+        images: imgs.sort((x, y) => VB.naturalCompare(x.name, y.name)),
+        selected: true, status: 'idle', done: 0, total: imgs.length, pages: [], error: ''
+      }));
+
+    $('b-zipinfo').textContent = `Đã quét: ${chapters.length} chương · ${chapters.reduce((s, c) => s + c.total, 0)} ảnh.`;
+    renderChapters();
+    setStatus(chapters.length ? 'Chọn chương rồi bấm “Bắt đầu dịch”.' : 'Không tìm thấy ảnh nào trong zip.');
+  }
+
+  // ---------- render ----------
+  function renderChapters() {
+    const filter = ($('b-filter').value || '').toLowerCase();
+    const box = $('b-list');
+    box.innerHTML = '';
+    chapters.filter(c => !filter || c.name.toLowerCase().includes(filter)).forEach(c => {
+      const row = document.createElement('div');
+      row.className = 'vb-chapter ' + c.status;
+      row.innerHTML = `
+        <label class="vb-inline"><input type="checkbox" data-sel="${c.id}" ${c.selected ? 'checked' : ''}> <b>${escapeHtml(c.name)}</b></label>
+        <span class="vb-hint">${c.total} ảnh</span>
+        <span class="vb-badge" data-badge="${c.id}">${statusText(c)}</span>
+        <span class="vb-spacer"></span>
+        <button class="vb-btn vb-btn-icon" data-one="${c.id}" title="Chỉ dịch chương này">▶</button>`;
+      box.appendChild(row);
+    });
+    box.onchange = e => {
+      const cb = e.target.closest('[data-sel]');
+      if (cb) { const c = find(cb.dataset.sel); if (c) c.selected = cb.checked; }
+    };
+    box.onclick = async e => {
+      const b = e.target.closest('[data-one]');
+      if (b && !running) { const c = find(b.dataset.one); if (c) await runAll([c]); }
+    };
+  }
+
+  const find = id => chapters.find(c => c.id === id);
+  const statusText = c => ({ idle: 'chờ', running: `đang chạy ${c.done}/${c.total}`, done: `xong ${c.done}/${c.total}`, error: 'lỗi: ' + c.error, stopped: `dừng ${c.done}/${c.total}` }[c.status] || '');
+
+  function refreshBadge(c) {
+    const el = document.querySelector(`[data-badge="${c.id}"]`);
+    if (el) { el.textContent = statusText(c); el.parentElement.className = 'vb-chapter ' + c.status; }
+  }
+
+  const setStatus = t => { $('b-status').textContent = t; };
+  function bumpProgress() {
+    doneUnits++;
+    $('b-progress').style.width = totalUnits ? Math.round(doneUnits / totalUnits * 100) + '%' : '0%';
+  }
+  const escapeHtml = s => String(s).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+
+  // ---------- chay ----------
+  async function runAll(list) {
+    const targets = (list || chapters.filter(c => c.selected));
+    if (!targets.length) return alert('Chưa chọn chương nào.');
+    if (!VB.getKeys().length) return alert('Chưa có API key. Về trang chính → ⚙ Nâng cao → tab API Keys.');
+
+    saveOptions();
+    running = true; stopFlag = false;
+    $('b-start').disabled = true; $('b-stop').disabled = false;
+    totalUnits = targets.reduce((s, c) => s + c.total, 0);
+    doneUnits = 0;
+    $('b-progress').style.width = '0%';
+
+    for (const c of targets) {
+      if (stopFlag) break;
+      await runChapter(c);
+    }
+
+    running = false;
+    $('b-start').disabled = false; $('b-stop').disabled = true;
+    setStatus(stopFlag ? 'Đã dừng.' : 'Hoàn tất tất cả chương đã chọn ✔');
+    renderResults();
+  }
+
+  async function runChapter(c) {
+    c.status = 'running'; c.done = 0; c.pages = []; c.error = '';
+    refreshBadge(c);
+
+    const o = readOptions();
+    const conc = Math.max(1, Math.min(3, o.concurrency));
+    let cursor = 0;
+    let prevTail = '';
+
+    const worker = async () => {
+      while (!stopFlag) {
+        const i = cursor++;
+        if (i >= c.images.length) return;
+        const img = c.images[i];
+        setStatus(`[${c.name}] ${i + 1}/${c.total} · ${img.name}`);
+        try {
+          const page = await processImage(img, o, conc === 1 ? prevTail : '');
+          c.pages[i] = page;
+          if (conc === 1 && page.translated) {
+            prevTail = VB.splitLines(page.translated).slice(-4).join('\n');
+          }
+        } catch (e) {
+          if (e.name === 'AbortError' || /Đã dừng/.test(e.message)) return;
+          c.pages[i] = { name: img.name, source: '', translated: '', error: e.message };
+          c.error = e.message;
+        }
+        c.done++;
+        bumpProgress();
+        refreshBadge(c);
+        if (o.delayMs) await VB.sleep(o.delayMs);
+      }
+    };
+
+    await Promise.all(Array.from({ length: conc }, worker));
+    c.status = stopFlag ? 'stopped' : (c.pages.some(p => p && p.error) ? 'error' : 'done');
+    if (c.status === 'done') c.error = '';
+    refreshBadge(c);
+    renderResults();
+  }
+
+  async function processImage(img, o, prevTail) {
+    const blob = await img.entry.async('blob');
+    const typed = blob.type ? blob : new Blob([blob], { type: VB.mimeOf(img.name) });
+    const parts = await VB.imageToParts(typed, { maxWidth: o.maxWidth, sliceTall: o.sliceTall, sliceHeight: 3000 });
+
+    const ocrPrompt = VB.buildOcrPrompt({
+      sourceLang: o.sourceLang, contentType: o.contentType,
+      skipSfx: o.skipSfx, sfxTag: VB.data.bilingual.sfxTag
+    });
+
+    // OCR: neu anh bi cat thanh nhieu manh -> OCR tung manh roi noi lai (bo dong trung o mep)
+    const chunks = [];
+    for (const part of parts) {
+      const txt = await VB.callGemini({
+        model: o.model,
+        parts: [{ text: ocrPrompt }, part],
+        generationConfig: { temperature: 0.1 },
+        shouldStop: () => stopFlag,
+        onStatus: setStatus
+      });
+      chunks.push(txt);
+    }
+    let source = dedupJoin(chunks);
+    if (!source || source === '[NO TEXT]') return { name: img.name, source: '', translated: '', empty: true };
+
+    const lines = VB.splitLines(source);
+    const ctxBlock = o.useContext ? VB.buildContextBlock(VB.langName(o.targetLang), 'translate') : '';
+    const styleBlock = o.styleGuide ? VB.getStyleBlock(VB.langName(o.targetLang), 'translate') : '';
+
+    const translated = await VB.callGemini({
+      model: o.model,
+      parts: [{
+        text: VB.buildTranslatePrompt({
+          sourceLang: o.sourceLang, targetLang: o.targetLang,
+          text: lines.join('\n'), lineCount: lines.length,
+          contextBlock: ctxBlock, styleBlock, prevTail,
+          tagSfx: !o.skipSfx && VB.data.bilingual.tagSfxInPrompt,
+          sfxTag: VB.data.bilingual.sfxTag
+        })
+      }],
+      generationConfig: { temperature: 0.35 },
+      shouldStop: () => stopFlag,
+      onStatus: setStatus
+    });
+
+    return { name: img.name, source: lines.join('\n'), translated: VB.splitLines(translated).join('\n') };
+  }
+
+  /** Noi ket qua OCR cua cac lat cat, bo dong trung lap o vung chong lan */
+  function dedupJoin(chunks) {
+    const out = [];
+    chunks.forEach(ch => {
+      VB.splitLines(ch).forEach(l => {
+        if (out.length && out.slice(-3).some(p => p === l)) return;
+        out.push(l);
+      });
+    });
+    return out.join('\n');
+  }
+
+  // ---------- ket qua ----------
+  function chapterText(c) {
+    const o = readOptions();
+    const head = `=== ${c.name} ===\n`;
+    const body = c.pages.map((p, i) => {
+      if (!p) return '';
+      const title = `\n[Trang ${String(i + 1).padStart(2, '0')} — ${p.name}]`;
+      if (p.error) return `${title}\n⚠ LỖI: ${p.error}`;
+      if (p.empty || !p.source) return `${title}\n(không có chữ)`;
+      const content = o.bilingual ? VB.mergeBilingual(p.source, p.translated) : p.translated;
+      return `${title}\n${content}`;
+    }).filter(Boolean).join('\n');
+    return (head + body).trim() + '\n';
+  }
+
+  function renderResults() {
+    const box = $('b-results');
+    const done = chapters.filter(c => c.pages && c.pages.length);
+    box.innerHTML = done.length ? '' : '<span class="vb-hint">Chưa có kết quả.</span>';
+    done.forEach(c => {
+      const div = document.createElement('details');
+      div.className = 'vb-result';
+      div.innerHTML = `
+        <summary>${escapeHtml(c.name)} — ${c.done}/${c.total} trang</summary>
+        <div class="vb-row">
+          <button class="vb-btn" data-dl="${c.id}">⬇ .txt</button>
+          <button class="vb-btn" data-dx="${c.id}">⬇ .docx</button>
+          <button class="vb-btn" data-cp="${c.id}">Copy</button>
+        </div>
+        <textarea rows="16" data-ta="${c.id}">${escapeHtml(chapterText(c))}</textarea>`;
+      box.appendChild(div);
+    });
+    box.onclick = async e => {
+      const dl = e.target.closest('[data-dl]'), dx = e.target.closest('[data-dx]'), cp = e.target.closest('[data-cp]');
+      const id = (dl || dx || cp) && (dl || dx || cp).dataset[dl ? 'dl' : dx ? 'dx' : 'cp'];
+      if (!id) return;
+      const ta = document.querySelector(`[data-ta="${id}"]`);
+      const c = find(id);
+      const content = ta ? ta.value : chapterText(c);
+      const fname = safeName(c.name);
+      if (dl) downloadText(content, fname + '.txt');
+      if (dx) downloadText(content, fname + '.txt');   // .docx: dung nut o trang chinh neu can OOXML
+      if (cp) { try { await navigator.clipboard.writeText(content); setStatus('Đã copy ' + c.name); } catch (err) { setStatus('Copy thất bại'); } }
+    };
+  }
+
+  const safeName = n => String(n).replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, ' ').trim().slice(0, 80);
+
+  function downloadText(content, filename) {
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  async function zipAll() {
+    const done = chapters.filter(c => c.pages && c.pages.length);
+    if (!done.length) return alert('Chưa có kết quả nào.');
+    const zip = new JSZip();
+    done.forEach(c => {
+      const ta = document.querySelector(`[data-ta="${c.id}"]`);
+      zip.file(safeName(c.name) + '.txt', ta ? ta.value : chapterText(c));
+    });
+    const blob = await zip.generateAsync({ type: 'blob' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = safeName(VB.data.context.title || 'visionbox-batch') + '.zip';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+  }
+
+  // ---------- options ----------
+  function readOptions() {
+    return {
+      model: $('b-model').value,
+      contentType: $('b-type').value,
+      sourceLang: $('b-src').value,
+      targetLang: $('b-dst').value,
+      concurrency: +$('b-conc').value,
+      delayMs: +$('b-delay').value || 0,
+      maxWidth: +$('b-width').value || 1400,
+      skipSfx: $('b-skipsfx').checked,
+      styleGuide: $('b-style').checked,
+      sliceTall: $('b-slice').checked,
+      bilingual: $('b-bi').checked,
+      useContext: $('b-ctx').checked
+    };
+  }
+
+  function saveOptions() {
+    Object.assign(VB.data.batch, readOptions());
+    VB.save();
+  }
+
+  function fillOptions() {
+    const b = VB.data.batch;
+    $('b-model').value = b.model; $('b-type').value = b.contentType;
+    $('b-src').value = b.sourceLang; $('b-dst').value = b.targetLang;
+    $('b-conc').value = String(b.concurrency); $('b-delay').value = b.delayMs;
+    $('b-width').value = b.maxWidth; $('b-skipsfx').checked = b.skipSfx;
+    $('b-style').checked = b.styleGuide; $('b-slice').checked = b.sliceTall;
+    $('b-bi').checked = VB.data.bilingual.enabled;
+    $('b-ctxinfo').textContent = VB.hasContext()
+      ? `Ngữ cảnh: ${VB.contextCharCount().toLocaleString()} ký tự`
+      : 'Chưa có ngữ cảnh (thiết lập ở trang chính → ⚙ Nâng cao).';
+    const keys = VB.getKeys();
+    $('b-keyinfo').textContent = keys.length ? `${keys.length} API key sẵn sàng` : '⚠ Chưa có API key';
+  }
+
+  // ---------- bind ----------
+  function init() {
+    fillOptions();
+    $('b-back').addEventListener('click', () => { location.href = 'index.html'; });
+    $('b-zip').addEventListener('change', e => { loadZips(Array.from(e.target.files || [])); e.target.value = ''; });
+
+    const drop = $('b-drop');
+    ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
+    ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
+    drop.addEventListener('drop', e => {
+      const files = Array.from(e.dataTransfer.files || []).filter(f => /\.zip$/i.test(f.name));
+      if (files.length) loadZips(files); else alert('Chỉ nhận file .zip');
+    });
+
+    $('b-all').addEventListener('click', () => { chapters.forEach(c => c.selected = true); renderChapters(); });
+    $('b-none').addEventListener('click', () => { chapters.forEach(c => c.selected = false); renderChapters(); });
+    $('b-invert').addEventListener('click', () => { chapters.forEach(c => c.selected = !c.selected); renderChapters(); });
+    $('b-filter').addEventListener('input', renderChapters);
+    $('b-start').addEventListener('click', () => runAll());
+    $('b-stop').addEventListener('click', () => { stopFlag = true; setStatus('Đang dừng sau ảnh hiện tại…'); });
+    $('b-zipall').addEventListener('click', zipAll);
+    $('b-copyall').addEventListener('click', async () => {
+      const all = chapters.filter(c => c.pages.length).map(chapterText).join('\n\n');
+      try { await navigator.clipboard.writeText(all); setStatus('Đã copy toàn bộ'); } catch (e) { setStatus('Copy thất bại'); }
+    });
+    window.addEventListener('beforeunload', e => { if (running) { e.preventDefault(); e.returnValue = ''; } });
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+})();
