@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' https://generativelanguage.googleapis.com; img-src 'self' data: blob:;">
+  <title>VisionBox — Dịch hàng loạt</title>
+  <link rel="icon" href="icon.png" type="image/png">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="vb-extra.css">
+</head>
+<body class="vb-batch-page">
+
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-text">
+      <h1>VisionBox · Dịch hàng loạt</h1>
+      <span class="brand-sub">Upload .zip chứa folder từng chương → chọn chương → OCR + dịch tự động</span>
+    </div>
+  </div>
+  <div class="topbar-controls">
+    <button class="btn btn-secondary" id="b-back">← Về trang chính</button>
+    <span class="vb-hookstatus" id="b-keyinfo"></span>
+  </div>
+</header>
+
+<main class="vb-batch">
+  <!-- BUOC 1 -->
+  <section class="vb-card">
+    <h2>1. Nạp file ZIP</h2>
+    <div class="vb-drop" id="b-drop">
+      <p>Kéo &amp; thả file <b>.zip</b> vào đây, hoặc</p>
+      <label class="vb-btn vb-btn-primary" for="b-zip">Chọn file .zip</label>
+      <input type="file" id="b-zip" accept=".zip,application/zip" multiple hidden>
+      <p class="vb-hint">Trong zip, mỗi <b>folder</b> = 1 chương. Ảnh nằm ngoài folder sẽ gom vào chương “(gốc)”.</p>
+    </div>
+    <div id="b-zipinfo" class="vb-hint"></div>
+  </section>
+
+  <!-- BUOC 2 -->
+  <section class="vb-card">
+    <h2>2. Cấu hình dịch</h2>
+    <div class="vb-grid3">
+      <div class="vb-field"><label>Model</label>
+        <select id="b-model">
+          <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite</option>
+          <option value="gemini-2.5-flash" selected>gemini-2.5-flash</option>
+          <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite</option>
+          <option value="gemini-2.5-pro">gemini-2.5-pro</option>
+        </select>
+      </div>
+      <div class="vb-field"><label>Loại truyện</label>
+        <select id="b-type"><option value="manga">Manga (phải → trái)</option><option value="webtoon">Webtoon (trên → dưới)</option></select>
+      </div>
+      <div class="vb-field"><label>Ngôn ngữ gốc</label>
+        <select id="b-src"><option value="ja">Japanese (日本語)</option><option value="ko">Korean (한국어)</option><option value="zh">Chinese (中文)</option><option value="en">English</option></select>
+      </div>
+      <div class="vb-field"><label>Dịch sang</label>
+        <select id="b-dst"><option value="vi">Vietnamese</option><option value="en">English</option><option value="ja">Japanese</option><option value="ko">Korean</option><option value="zh">Chinese</option></select>
+      </div>
+      <div class="vb-field"><label>Luồng song song</label>
+        <select id="b-conc"><option value="1">1 (an toàn nhất)</option><option value="2">2</option><option value="3">3</option></select>
+      </div>
+      <div class="vb-field"><label>Nghỉ giữa 2 ảnh (ms)</label><input type="number" id="b-delay" min="0" step="100" value="700"></div>
+      <div class="vb-field"><label>Thu nhỏ ảnh về tối đa (px)</label><input type="number" id="b-width" min="600" step="100" value="1400"></div>
+    </div>
+    <div class="vb-row">
+      <label class="vb-inline"><input type="checkbox" id="b-skipsfx"> Bỏ qua SFX</label>
+      <label class="vb-inline"><input type="checkbox" id="b-style" checked> Elements of Style</label>
+      <label class="vb-inline"><input type="checkbox" id="b-slice" checked> Tự cắt ảnh quá dài</label>
+      <label class="vb-inline"><input type="checkbox" id="b-bi" checked> Xuất song ngữ (<code>*dòng gốc</code>, SFX → <code>(sfx)</code>)</label>
+      <label class="vb-inline"><input type="checkbox" id="b-ctx" checked> Dùng ngữ cảnh đã lưu</label>
+      <span class="vb-hint" id="b-ctxinfo"></span>
+    </div>
+  </section>
+
+  <!-- BUOC 3 -->
+  <section class="vb-card">
+    <h2>3. Chọn chương cần dịch</h2>
+    <div class="vb-row">
+      <button class="vb-btn" id="b-all">Chọn tất cả</button>
+      <button class="vb-btn" id="b-none">Bỏ chọn</button>
+      <button class="vb-btn" id="b-invert">Đảo chọn</button>
+      <input type="text" id="b-filter" placeholder="Lọc theo tên chương…" class="vb-filter">
+      <span class="vb-spacer"></span>
+      <button class="vb-btn vb-btn-primary" id="b-start">▶ Bắt đầu dịch</button>
+      <button class="vb-btn vb-btn-danger" id="b-stop" disabled>■ Dừng</button>
+    </div>
+    <div class="vb-progress"><div class="vb-progress-fill" id="b-progress"></div></div>
+    <div class="vb-hint" id="b-status">Chưa nạp chương nào.</div>
+    <div id="b-list" class="vb-chapters"></div>
+  </section>
+
+  <!-- BUOC 4 -->
+  <section class="vb-card">
+    <h2>4. Kết quả</h2>
+    <div class="vb-row">
+      <button class="vb-btn vb-btn-primary" id="b-zipall">⬇ Tải tất cả (.zip)</button>
+      <button class="vb-btn" id="b-copyall">Copy tất cả</button>
+      <span class="vb-hint">Mỗi chương là 1 file .txt trong zip.</span>
+    </div>
+    <div id="b-results" class="vb-results"></div>
+  </section>
+</main>
+
+<script src="jszip.min.js"></script>
+<script src="style-guide.js"></script>
+<script src="vb-core.js"></script>
+<script src="vb-batch.js"></script>
+</body>
+</html>
