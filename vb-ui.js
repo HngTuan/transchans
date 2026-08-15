@@ -10,13 +10,56 @@
   const VB = window.VB;
   const $ = id => document.getElementById(id);
 
-  // ============ 1. FETCH HOOK ============
+  // ============ 1. FETCH GATE: context + xoay key + chong 429 ============
   const origFetch = window.fetch.bind(window);
   let hookStatusEl = null;
   const setHookStatus = t => { if (hookStatusEl) hookStatusEl.textContent = t || ''; };
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+  // Hang doi tuan tu: moi request toi Gemini cach nhau it nhat minGap ms.
+  // minGap TU DONG gian ra khi dinh 429 va tu co lai khi chay tron tru -
+  // day la thu giup giam 429 nhieu nhat, hon ca viec xoay key.
+  const GATE = {
+    minGap: 1500, floor: 800, ceil: 20000,
+    lastAt: 0, chain: Promise.resolve(), okStreak: 0, maxRetry: 8
+  };
+  window.VBGate = GATE;
+
+  function schedule(task) {
+    const run = GATE.chain.then(async () => {
+      const wait = GATE.lastAt + GATE.minGap - Date.now();
+      if (wait > 0) await sleep(wait);
+      GATE.lastAt = Date.now();
+      return task();
+    });
+    GATE.chain = run.then(() => {}, () => {});
+    return run;
+  }
+
+  function onGateOk() {
+    if (++GATE.okStreak >= 4 && GATE.minGap > GATE.floor) {
+      GATE.minGap = Math.max(GATE.floor, Math.round(GATE.minGap * 0.85));
+      GATE.okStreak = 0;
+    }
+  }
+  function onGateBusy() {
+    GATE.okStreak = 0;
+    GATE.minGap = Math.min(GATE.ceil, Math.max(2500, Math.round(GATE.minGap * 1.7)));
+  }
+
+  // Google tra ve thoi gian nen cho trong error.details[].retryDelay ("23s")
+  function parseRetryDelay(text) {
+    try {
+      const j = JSON.parse(text);
+      const d = (j.error && j.error.details || []).find(x => x && x.retryDelay);
+      const m = d && /^([\d.]+)s$/.exec(d.retryDelay);
+      if (m) return Math.ceil(parseFloat(m[1]) * 1000);
+    } catch (e) {}
+    return 0;
+  }
 
   function targetLangName() {
-    const sel = $('target-lang-select');
+    const sel = document.getElementById('target-lang-select');
     return VB.langName(sel ? sel.value : 'vi');
   }
 
@@ -26,14 +69,12 @@
     try { obj = JSON.parse(bodyText); } catch (e) { return bodyText; }
     if (!obj || !Array.isArray(obj.contents)) return bodyText;
 
-    const allText = obj.contents
-      .flatMap(c => (c.parts || []))
-      .map(p => p.text || '')
-      .join('\n');
-    if (!allText) return bodyText;
-    if (allText.indexOf('--- STORY CONTEXT') !== -1) return bodyText;   // da chen roi
+    const allText = obj.contents.flatMap(c => c.parts || []).map(p => p.text || '').join('\n');
+    if (!allText || allText.indexOf('--- STORY CONTEXT') !== -1) return bodyText;
 
-    const isTranslate = /translat|dịch|翻訳|번역/i.test(allText);
+    // Nhan dien CHINH XAC theo cau mo dau cua tung prompt trong renderer.js,
+    // khong dung tu khoa "translate" (prompt OCR cung chua tu nay).
+    const isTranslate = /elite comic localizer|refining an existing/i.test(allText);
     if (!isTranslate && !VB.data.context.applyToOcr) return bodyText;
 
     let block = VB.buildContextBlock(targetLangName(), isTranslate ? 'translate' : 'ocr');
@@ -41,15 +82,19 @@
 
     if (isTranslate && VB.data.bilingual.enabled && VB.data.bilingual.tagSfxInPrompt) {
       block += `\n\nSFX TAGGING RULE
-- If a line of the script is a sound effect / onomatopoeia, prefix its translation with "${VB.data.bilingual.sfxTag} " (keep everything else unchanged, still one output line per input line).`;
+- If a line of the script is a sound effect / onomatopoeia, prefix its translation with "${VB.data.bilingual.sfxTag} " (everything else unchanged, still exactly one output line per input line).`;
     }
 
     const first = obj.contents[0];
     if (first && Array.isArray(first.parts)) first.parts.unshift({ text: block });
     else obj.contents.unshift({ role: 'user', parts: [{ text: block }] });
-
     return JSON.stringify(obj);
   }
+
+  const applyKey = (u, k) => {
+    try { const p = new URL(u); p.searchParams.set('key', k); return p.toString(); }
+    catch (e) { return u.replace(/([?&])key=[^&]*/, `$1key=${encodeURIComponent(k)}`); }
+  };
 
   window.fetch = async function (input, init) {
     try {
@@ -57,13 +102,11 @@
       const url0 = (typeof input === 'string') ? input : (input && input.url) || '';
       if (!/generativelanguage\.googleapis\.com/.test(url0)) return origFetch(input, init);
 
-      let url = url0;
-      let opts;
+      let url = url0, opts;
       if (typeof input !== 'string' && input && input.url) {
         const req = input;
         opts = {
-          method: req.method,
-          headers: new Headers(req.headers),
+          method: req.method, headers: new Headers(req.headers),
           body: (req.method && req.method !== 'GET' && req.method !== 'HEAD') ? await req.clone().text() : undefined,
           mode: req.mode, credentials: req.credentials, cache: req.cache,
           redirect: req.redirect, referrer: req.referrer, signal: req.signal
@@ -73,42 +116,44 @@
         if (opts.headers && !(opts.headers instanceof Headers)) opts.headers = new Headers(opts.headers);
       }
       opts.__vbManaged = true;
+      if (typeof opts.body === 'string' && /:generateContent/.test(url)) opts.body = injectContext(opts.body);
 
-      // chen context
-      if (typeof opts.body === 'string' && /:generateContent/.test(url)) {
-        opts.body = injectContext(opts.body);
-      }
+      return schedule(async () => {
+        const keys = VB.getKeys();
+        let last = null, lastText = '';
+        for (let attempt = 0; attempt <= GATE.maxRetry; attempt++) {
+          const k = keys.length ? VB.nextKey() : null;
+          const u = k ? applyKey(url, k) : url;
+          if (k && opts.headers && opts.headers.has && opts.headers.has('x-goog-api-key')) opts.headers.set('x-goog-api-key', k);
 
-      const keys = VB.getKeys();
-      if (!keys.length) return origFetch(url, opts);
+          const res = await origFetch(u, opts);
+          if (res.status !== 429 && res.status !== 503 && res.status !== 500) {
+            onGateOk();
+            setHookStatus(res.ok ? `${k ? VB.keyLabel(k) + ' ' : ''}✓ (gap ${GATE.minGap}ms)` : `HTTP ${res.status}`);
+            return res;
+          }
 
-      const applyKey = (u, k) => {
-        try {
-          const parsed = new URL(u);
-          parsed.searchParams.set('key', k);
-          return parsed.toString();
-        } catch (e) { return u.replace(/([?&])key=[^&]*/, `$1key=${encodeURIComponent(k)}`); }
-      };
+          last = res;
+          lastText = await res.clone().text().catch(() => '');
+          if (k) VB.coolKey(k, res.status === 429 ? 45000 : 12000);
+          onGateBusy();
+          GATE.lastAt = Date.now();
 
-      let res = null;
-      for (let i = 0; i < keys.length; i++) {
-        const k = VB.nextKey();
-        if (!k) break;
-        if (opts.headers && opts.headers.has && opts.headers.has('x-goog-api-key')) opts.headers.set('x-goog-api-key', k);
-        res = await origFetch(applyKey(url, k), opts);
-        if (res.status !== 429 && res.status !== 503) {
-          setHookStatus(res.ok ? `key ${VB.keyLabel(k)} ✓` : `key ${VB.keyLabel(k)} · HTTP ${res.status}`);
-          return res;
+          const freeKey = keys.some(x => !VB.isCooling(x));
+          const suggested = parseRetryDelay(lastText);
+          const backoff = Math.min(60000, 1200 * Math.pow(2, attempt)) + Math.floor(Math.random() * 600);
+          const wait = suggested || (freeKey ? 600 : backoff);
+          setHookStatus(`HTTP ${res.status} → cho ${Math.round(wait / 1000)}s, gap ${GATE.minGap}ms`);
+          await sleep(wait);
         }
-        VB.coolKey(k, res.status === 429 ? 45000 : 12000);
-        setHookStatus(`429 → đổi key (${VB.keyLabel(k)})`);
-      }
-      return res || origFetch(url, opts);
+        return new Response(lastText, { status: last ? last.status : 429, statusText: last ? last.statusText : '' });
+      });
     } catch (e) {
-      console.warn('[VB-UI] fetch hook loi, dung fetch goc:', e);
+      console.warn('[VB-UI] fetch gate loi, dung fetch goc:', e);
       return origFetch(input, init);
     }
   };
+
 
   // ============ 2. MODAL ============
   const MODAL_HTML = `
