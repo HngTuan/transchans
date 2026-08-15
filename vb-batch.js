@@ -217,17 +217,14 @@
   // ---------- ket qua ----------
   function chapterText(c) {
     const o = readOptions();
-    const head = `=== ${c.name} ===\n`;
-    const body = c.pages.map((p, i) => {
-      if (!p) return '';
-      const title = `\n[Trang ${String(i + 1).padStart(2, '0')} — ${p.name}]`;
-      if (p.error) return `${title}\n⚠ LỖI: ${p.error}`;
-      if (p.empty || !p.source) return `${title}\n(không có chữ)`;
-      const content = o.bilingual ? VB.mergeBilingual(p.source, p.translated) : p.translated;
-      return `${title}\n${content}`;
-    }).filter(Boolean).join('\n');
-    return (head + body).trim() + '\n';
+    return VB.FMT.buildChapterText(c.name, c.pages.map((p, i) => ({
+      no: i + 1, name: p ? p.name : `image-${i + 1}`,
+      lines: p && p.translated ? VB.splitLines(p.translated) : [],
+      source: p && p.source ? VB.splitLines(p.source) : [],
+      error: p && p.error ? p.error : ''
+    })), { bilingual: o.bilingual });
   }
+
 
   function renderResults() {
     const box = $('b-results');
