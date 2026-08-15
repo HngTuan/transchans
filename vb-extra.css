@@ -77,3 +77,5 @@ body.light-mode, [data-theme="light"] { --vb-bd:#d8dce6; --vb-bg:#fff; --vb-bg2:
 .vb-result { border:1px solid var(--vb-bd); border-radius:9px; padding:10px; background:var(--vb-bg2); }
 .vb-result summary { cursor:pointer; font-weight:600; }
 @media (max-width:720px){ .vb-grid2 { grid-template-columns:1fr; } }
+.vb-bi-src { color: var(--text-muted); opacity: .8; font-style: italic; }
+body.light-theme .vb-bi-src { opacity: .75; }
