@@ -90,3 +90,12 @@ body.light-theme .vb-bi-src { opacity: .75; }
   background: var(--vb-bg); color: var(--vb-fg); border: 1px solid var(--vb-bd);
   border-radius: 9px; padding: 6px 10px; font-size: 13px; min-width: 220px;
 }
+
+/* ---------- Studio: thanh tab gom công cụ ---------- */
+.vb-studio-nav { display:flex; gap:6px; padding:14px 18px 0; max-width:1200px; margin:0 auto; flex-wrap:wrap; }
+.vb-studio-tab { background:var(--vb-bg2); color:var(--vb-fg); border:1px solid var(--vb-bd); border-bottom:none;
+  border-radius:10px 10px 0 0; padding:10px 20px; cursor:pointer; font-size:14px; }
+.vb-studio-tab:hover { border-color:var(--vb-acc); }
+.vb-studio-tab.is-active { background:var(--vb-bg); color:var(--vb-acc); font-weight:600; box-shadow:inset 0 2px 0 var(--vb-acc); }
+.vb-studio-panel { display:none; }
+.vb-studio-panel.is-active { display:flex; }
