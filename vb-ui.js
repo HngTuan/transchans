@@ -244,6 +244,22 @@
 </div>`;
 
   function mount() {
+    const isStudio = document.body.classList.contains('vb-studio-page');
+    const bar = document.querySelector('.topbar-controls') || document.querySelector('.topbar') || document.body;
+    const wrap = document.createElement('div');
+    wrap.className = 'field vb-topbar-field';
+    wrap.innerHTML = `
+      <label>Mở rộng</label>
+      <div class="vb-topbar-btns">
+        <button type="button" class="btn btn-secondary" id="vb-open">⚙ Nâng cao</button>
+        <button type="button" class="btn btn-secondary" id="vb-goto">${isStudio ? '← Trang chính' : '🧰 Studio'}</button>
+        <span class="vb-hookstatus" id="vb-hook-status"></span>
+      </div>`;
+    bar.appendChild(wrap);
+    hookStatusEl = $('vb-hook-status');
+    $('vb-open').addEventListener('click', open);
+    $('vb-goto').addEventListener('click', () => { location.href = isStudio ? 'index.html' : 'studio.html'; });
+
     const holder = document.createElement('div');
     holder.innerHTML = MODAL_HTML;
     document.body.appendChild(holder.firstElementChild);
