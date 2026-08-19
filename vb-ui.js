@@ -274,6 +274,31 @@
       VB.resetAll(); fillForm(); renderFiles(); note('Đã khôi phục mặc định');
     });
 
+    // --- [FIX LỖI: LOGIC CHUYỂN TAB VÀ ĐÓNG MODAL] ---
+    $('vb-close').addEventListener('click', close);
+    $('vb-modal').addEventListener('click', e => {
+      // Đóng modal khi bấm vào vùng xám bên ngoài
+      if (e.target === $('vb-modal')) close();
+    });
+
+    document.querySelectorAll('.vb-tab').forEach(tab => {
+      tab.addEventListener('click', e => {
+        // Xóa class active ở tất cả tab và pane
+        document.querySelectorAll('.vb-tab').forEach(t => t.classList.remove('is-active'));
+        document.querySelectorAll('.vb-pane').forEach(p => p.classList.remove('is-active'));
+        
+        // Gắn class active cho tab vừa click
+        const target = e.currentTarget;
+        target.classList.add('is-active');
+        
+        // Gắn class active cho pane tương ứng để hiện nội dung
+        const paneId = target.dataset.tab;
+        const pane = document.querySelector(`.vb-pane[data-pane="${paneId}"]`);
+        if (pane) pane.classList.add('is-active');
+      });
+    });
+    // --------------------------------------------------
+
     fillForm();
     renderFiles();
     importNativeKey();
