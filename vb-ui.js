@@ -244,6 +244,11 @@
 </div>`;
 
   function mount() {
+    const holder = document.createElement('div');
+    holder.innerHTML = MODAL_HTML;
+    document.body.appendChild(holder.firstElementChild);
+
+    // --- nut tren topbar ---
     const isStudio = document.body.classList.contains('vb-studio-page');
     const bar = document.querySelector('.topbar-controls') || document.querySelector('.topbar') || document.body;
     const wrap = document.createElement('div');
@@ -259,38 +264,6 @@
     hookStatusEl = $('vb-hook-status');
     $('vb-open').addEventListener('click', open);
     $('vb-goto').addEventListener('click', () => { location.href = isStudio ? 'index.html' : 'studio.html'; });
-
-    const holder = document.createElement('div');
-    holder.innerHTML = MODAL_HTML;
-    document.body.appendChild(holder.firstElementChild);
-
-    // --- nut tren topbar ---
-    const bar = document.querySelector('.topbar-controls') || document.querySelector('.topbar') || document.body;
-    const wrap = document.createElement('div');
-    wrap.className = 'field vb-topbar-field';
-    wrap.innerHTML = `
-      <label>Mở rộng</label>
-      <div class="vb-topbar-btns">
-        <button type="button" class="btn btn-secondary vb-open" id="vb-open">⚙ Nâng cao</button>
-        <button type="button" class="btn btn-secondary" id="vb-goto-batch">📦 Dịch hàng loạt</button>
-        <span class="vb-hookstatus" id="vb-hook-status"></span>
-      </div>`;
-    bar.appendChild(wrap);
-    hookStatusEl = $('vb-hook-status');
-
-    $('vb-open').addEventListener('click', open);
-    $('vb-goto-batch').addEventListener('click', () => { location.href = 'batch.html'; });
-    $('vb-close').addEventListener('click', close);
-    $('vb-modal').addEventListener('click', e => { if (e.target.id === 'vb-modal') close(); });
-    document.addEventListener('keydown', e => {
-      if (e.key === 'Escape' && !$('vb-modal').hidden) close();
-      if (e.ctrlKey && e.shiftKey && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); open(); }
-    });
-
-    document.querySelectorAll('.vb-tab').forEach(t => t.addEventListener('click', () => {
-      document.querySelectorAll('.vb-tab').forEach(x => x.classList.toggle('is-active', x === t));
-      document.querySelectorAll('.vb-pane').forEach(p => p.classList.toggle('is-active', p.dataset.pane === t.dataset.tab));
-    }));
 
     buildKeyRows();
     bindContext();
