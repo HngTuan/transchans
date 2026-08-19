@@ -188,18 +188,6 @@
 
   // ================= UI tren trang chinh =================
   function mount() {
-    const btns = document.querySelector('.vb-topbar-btns');
-    if (btns && !document.getElementById('vb-goto-merge')) {
-      const m = document.createElement('button');
-      m.type = 'button'; m.id = 'vb-goto-merge'; m.className = 'btn btn-secondary';
-      m.textContent = '🔀 Gộp bản dịch';
-      m.addEventListener('click', () => { location.href = 'merge.html'; });
-      const r = document.createElement('button');
-      r.type = 'button'; r.id = 'vb-goto-remover'; r.className = 'btn btn-secondary';
-      r.textContent = '🧽 Xoá chữ trên ảnh';
-      r.addEventListener('click', () => { location.href = 'remover.html'; });
-      btns.appendChild(m); btns.appendChild(r);
-    }
 
     const bar = document.createElement('section');
     bar.id = 'vb-fmt-bar';
