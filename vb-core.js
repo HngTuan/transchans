@@ -228,9 +228,10 @@
           lastErr = new Error(`HTTP 403 (key ${keyLabel(key)}): ${errTxt.slice(0, 160)}`);
           continue;
         }
-        throw new Error(`HTTP ${res.status}: ${errTxt.slice(0, 300)}`);
+        throw Object.assign(new Error(`HTTP ${res.status}: ${errTxt.slice(0, 300)}`), { vbFatal: true });
       } catch (e) {
         if (e.name === 'AbortError') throw e;
+        if (e.vbFatal) throw e;          // 400/404/401… -> báo ngay, không retry vô ích
         lastErr = e;
         opt.onStatus && opt.onStatus('Lỗi: ' + e.message);
         await sleep(700, opt);
