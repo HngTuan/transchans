@@ -362,10 +362,16 @@
   }
 
   // ---------- bind ----------
+    const on = (id, ev, fn) => { const el = $(id); if (el) el.addEventListener(ev, fn); };
+
   function init() {
+    if (!$('b-list')) return;            // trang này không có panel batch -> bỏ qua
+    window.addEventListener('unhandledrejection', ev => {
+      console.error('[VB-BATCH] unhandled:', ev.reason);
+      if (running) setStatus('Lỗi ngầm: ' + (ev.reason && ev.reason.message || ev.reason));
+    });
     fillOptions();
-    $('b-back').addEventListener('click', () => { location.href = 'index.html'; });
-    $('b-zip').addEventListener('change', e => { loadZips(Array.from(e.target.files || [])); e.target.value = ''; });
+    on('b-back', 'click', () => { location.href = 'index.html'; });
 
     const drop = $('b-drop');
     ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
