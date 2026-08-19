@@ -201,9 +201,6 @@
       btns.appendChild(m); btns.appendChild(r);
     }
 
-    const summary = document.getElementById('summary-section');
-    if (!summary || document.getElementById('vb-fmt-bar')) return;
-
     const bar = document.createElement('section');
     bar.id = 'vb-fmt-bar';
     bar.className = 'vb-fmt-bar';
