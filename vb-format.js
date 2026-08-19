@@ -187,7 +187,15 @@
   };
 
   // ================= UI tren trang chinh =================
-  function mount() {
+function mount() {
+    // --- [FIX LỖI CRASH Ở ĐÂY] ---
+    // Khai báo và lấy DOM element thay vì gọi 'summary' trần gây lỗi ReferenceError
+    const summary = document.getElementById('summary-section');
+    if (!summary) {
+      console.warn('[VB-FMT] Không tìm thấy phần tử #summary-section. Đã bỏ qua việc gắn thanh công cụ.');
+      return; 
+    }
+    // -----------------------------
 
     const bar = document.createElement('section');
     bar.id = 'vb-fmt-bar';
