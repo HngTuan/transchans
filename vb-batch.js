@@ -9,6 +9,17 @@
   let running = false, stopFlag = false;
   let totalUnits = 0, doneUnits = 0;
 
+  const on = (id, ev, fn) => { const el = $(id); if (el) el.addEventListener(ev, fn); };
+
+  function init() {
+    if (!$('b-list')) return;            // trang này không có panel batch -> bỏ qua
+    window.addEventListener('unhandledrejection', ev => {
+      console.error('[VB-BATCH] unhandled:', ev.reason);
+      if (running) setStatus('Lỗi ngầm: ' + (ev.reason && ev.reason.message || ev.reason));
+    });
+    fillOptions();
+    on('b-back', 'click', () => { location.href = 'index.html'; });
+  }
   // ---------- nap zip ----------
   const IMG_RE = /\.(png|jpe?g|webp|heic|heif|bmp|gif)$/i;
 
