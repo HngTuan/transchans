@@ -1,5 +1,10 @@
-
 (() => {
+  // Kiểm tra xem có đang chạy trong môi trường Tauri (Desktop App) không
+  if (!window.__TAURI__ || !window.__TAURI__.core) {
+    console.log('[preload.js] Chạy trên trình duyệt web, nhường quyền cho Web Fallback.');
+    return;
+  }
+
   const { invoke } = window.__TAURI__.core;
 
   window.appConfig = {
