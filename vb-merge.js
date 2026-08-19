@@ -263,8 +263,11 @@ ${body}`;
 
   // ---------- bind ----------
   function init() {
-    $('m-keyinfo').textContent = VB.getKeys().length ? `${VB.getKeys().length} API key sẵn sàng` : '⚠ Chưa có API key';
-    $('m-back').addEventListener('click', () => { location.href = 'index.html'; });
+    if (!$('m-out')) return;
+    const info = $('m-keyinfo');
+    if (info) info.textContent = VB.getKeys().length ? `${VB.getKeys().length} API key sẵn sàng` : '⚠ Chưa có API key';
+    // xoá dòng $('m-back').addEventListener(...)
+
 
     ['a', 'b'].forEach(k => {
       $('m-file-' + k).addEventListener('change', async e => {
