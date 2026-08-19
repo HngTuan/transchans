@@ -90,8 +90,94 @@
   }
   const escapeHtml = s => String(s).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
 
+    // ---------- ket qua ----------
+  const EMPTY_MARK = '(không có chữ)';
+
+  // Ban du phong: dung khi vb-format.js chua duoc nap. Truoc day thieu no la
+  // chapterText() nem loi ngay trong renderResults() -> giet ca vong lap runAll().
+  function buildChapterFallback(name, pages, opt) {
+    const pad = n => String(n).padStart(2, '0');
+    const out = [`=== ${name} ===`, ''];
+    pages.forEach((p, i) => {
+      out.push(`[Trang ${pad(p.no || i + 1)} — ${p.name || 'image'}]`);
+      if (p.error) out.push('⚠ LỖI: ' + p.error);
+      else if (!p.lines || !p.lines.length) out.push(EMPTY_MARK);
+      else if (opt && opt.bilingual && p.source && p.source.length)
+        out.push(VB.mergeBilingual(p.source.join('\n'), p.lines.join('\n')));
+      else out.push(p.lines.join('\n'));
+      out.push('');
+    });
+    return out.join('\n').replace(/\n{3,}/g, '\n\n').trim() + '\n';
+  }
+
+  function chapterText(c) {
+    const o = readOptions();
+    const pages = (c.pages || []).map((p, i) => ({
+      no: i + 1,
+      name: p ? p.name : `image-${i + 1}`,
+      lines: p && p.translated ? VB.splitLines(p.translated) : [],
+      source: p && p.source ? VB.splitLines(p.source) : [],
+      error: p && p.error ? p.error : ''
+    }));
+    const opt = { bilingual: o.bilingual };
+    try {
+      const build = (VB.FMT && VB.FMT.buildChapterText) || buildChapterFallback;
+      return build(c.name, pages, opt);
+    } catch (e) {
+      console.error('[VB-BATCH] chapterText lỗi:', e);
+      return buildChapterFallback(c.name, pages, opt);
+    }
+  }
+
+  // Bọc render: mọi lỗi hiển thị chỉ được ghi log, TUYỆT ĐỐI không lan ra hàng đợi.
+  function renderResults() {
+    try { renderResultsInner(); }
+    catch (e) {
+      console.error('[VB-BATCH] renderResults lỗi:', e);
+      setStatus('Lỗi hiển thị kết quả (hàng đợi vẫn chạy tiếp): ' + e.message);
+    }
+  }
+
+  function renderResultsInner() {
+    const box = $('b-results');
+    const done = chapters.filter(c => c.pages && c.pages.length);
+    box.innerHTML = done.length ? '' : '<span class="vb-hint">Chưa có kết quả.</span>';
+    done.forEach(c => {
+      const div = document.createElement('details');
+      div.className = 'vb-result';
+      div.innerHTML = `
+        <summary>${escapeHtml(c.name)} — ${c.done}/${c.total} trang</summary>
+        <div class="vb-row">
+          <button class="vb-btn" data-dl="${c.id}">⬇ .txt</button>
+          <button class="vb-btn" data-dx="${c.id}">⬇ .docx</button>
+          <button class="vb-btn" data-cp="${c.id}">Copy</button>
+        </div>
+        <textarea rows="16" data-ta="${c.id}">${escapeHtml(chapterText(c))}</textarea>`;
+      box.appendChild(div);
+    });
+    box.onclick = async e => {
+      const dl = e.target.closest('[data-dl]'), dx = e.target.closest('[data-dx]'), cp = e.target.closest('[data-cp]');
+      const hit = dl || dx || cp;
+      if (!hit) return;
+      const id = hit.dataset.dl || hit.dataset.dx || hit.dataset.cp;
+      const c = find(id);
+      const ta = document.querySelector(`[data-ta="${id}"]`);
+      const content = ta ? ta.value : chapterText(c);
+      const fname = safeName(c.name);
+      if (dl) downloadText(content, fname + '.txt');
+      if (dx) {
+        if (VB.FMT && VB.FMT.download) await VB.FMT.download(content, fname, 'docx');
+        else downloadText(content, fname + '.txt');
+      }
+      if (cp) { try { await navigator.clipboard.writeText(content); setStatus('Đã copy ' + c.name); } catch (err) { setStatus('Copy thất bại'); } }
+    };
+  }
+
   // ---------- chay ----------
+  const IMAGE_TIMEOUT_MS = 180000;   // 1 ảnh treo quá 3 phút -> bỏ qua, không khoá cả loạt
+
   async function runAll(list) {
+    if (running) return;
     const targets = (list || chapters.filter(c => c.selected));
     if (!targets.length) return alert('Chưa chọn chương nào.');
     if (!VB.getKeys().length) return alert('Chưa có API key. Về trang chính → ⚙ Nâng cao → tab API Keys.');
@@ -103,15 +189,27 @@
     doneUnits = 0;
     $('b-progress').style.width = '0%';
 
-    for (const c of targets) {
-      if (stopFlag) break;
-      await runChapter(c);
+    try {
+      for (const c of targets) {
+        if (stopFlag) break;
+        try {
+          await runChapter(c);
+        } catch (e) {
+          // Một chương hỏng KHÔNG được phép làm chết hàng đợi nữa.
+          console.error('[VB-BATCH] chương lỗi:', c.name, e);
+          c.status = 'error';
+          c.error = e.message || String(e);
+          refreshBadge(c);
+        }
+      }
+    } finally {
+      running = false;
+      $('b-start').disabled = false;
+      $('b-stop').disabled = true;
+      const bad = chapters.filter(c => c.status === 'error').length;
+      setStatus(stopFlag ? 'Đã dừng.' : (bad ? `Hoàn tất, còn ${bad} chương lỗi.` : 'Hoàn tất tất cả chương đã chọn ✔'));
+      renderResults();
     }
-
-    running = false;
-    $('b-start').disabled = false; $('b-stop').disabled = true;
-    setStatus(stopFlag ? 'Đã dừng.' : 'Hoàn tất tất cả chương đã chọn ✔');
-    renderResults();
   }
 
   async function runChapter(c) {
@@ -136,9 +234,15 @@
             prevTail = VB.splitLines(page.translated).slice(-4).join('\n');
           }
         } catch (e) {
-          if (e.name === 'AbortError' || /Đã dừng/.test(e.message)) return;
-          c.pages[i] = { name: img.name, source: '', translated: '', error: e.message };
-          c.error = e.message;
+          const aborted = e.name === 'AbortError' || /Đã dừng/.test(e.message || '');
+          // CHỈ thoát worker khi người dùng thật sự bấm Dừng. Trước đây một
+          // request bị abort/timeout cũng làm worker return -> ảnh còn lại đứng im.
+          if (aborted && stopFlag) return;
+          c.pages[i] = {
+            name: img.name, source: '', translated: '',
+            error: aborted ? 'Quá thời gian chờ (timeout)' : (e.message || String(e))
+          };
+          c.error = c.pages[i].error;
         }
         c.done++;
         bumpProgress();
@@ -147,7 +251,7 @@
       }
     };
 
-    await Promise.all(Array.from({ length: conc }, worker));
+    await Promise.all(Array.from({ length: conc }, () => worker()));
     c.status = stopFlag ? 'stopped' : (c.pages.some(p => p && p.error) ? 'error' : 'done');
     if (c.status === 'done') c.error = '';
     refreshBadge(c);
@@ -155,134 +259,58 @@
   }
 
   async function processImage(img, o, prevTail) {
-    const blob = await img.entry.async('blob');
-    const typed = blob.type ? blob : new Blob([blob], { type: VB.mimeOf(img.name) });
-    const parts = await VB.imageToParts(typed, { maxWidth: o.maxWidth, sliceTall: o.sliceTall, sliceHeight: 3000 });
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), IMAGE_TIMEOUT_MS);
+    try {
+      const blob = await img.entry.async('blob');
+      const typed = blob.type ? blob : new Blob([blob], { type: VB.mimeOf(img.name) });
+      const parts = await VB.imageToParts(typed, { maxWidth: o.maxWidth, sliceTall: o.sliceTall, sliceHeight: 3000 });
 
-    const ocrPrompt = VB.buildOcrPrompt({
-      sourceLang: o.sourceLang, contentType: o.contentType,
-      skipSfx: o.skipSfx, sfxTag: VB.data.bilingual.sfxTag
-    });
+      const ocrPrompt = VB.buildOcrPrompt({
+        sourceLang: o.sourceLang, contentType: o.contentType,
+        skipSfx: o.skipSfx, sfxTag: VB.data.bilingual.sfxTag
+      });
 
-    // OCR: neu anh bi cat thanh nhieu manh -> OCR tung manh roi noi lai (bo dong trung o mep)
-    const chunks = [];
-    for (const part of parts) {
-      const txt = await VB.callGemini({
+      const chunks = [];
+      for (const part of parts) {
+        chunks.push(await VB.callGemini({
+          model: o.model,
+          parts: [{ text: ocrPrompt }, part],
+          generationConfig: { temperature: 0.1 },
+          signal: ac.signal,
+          shouldStop: () => stopFlag,
+          onStatus: setStatus
+        }));
+      }
+      const source = dedupJoin(chunks);
+      if (!source || source === '[NO TEXT]') return { name: img.name, source: '', translated: '', empty: true };
+
+      const lines = VB.splitLines(source);
+      const translated = await VB.callGemini({
         model: o.model,
-        parts: [{ text: ocrPrompt }, part],
-        generationConfig: { temperature: 0.1 },
+        parts: [{
+          text: VB.buildTranslatePrompt({
+            sourceLang: o.sourceLang, targetLang: o.targetLang,
+            text: lines.join('\n'), lineCount: lines.length,
+            contextBlock: o.useContext ? VB.buildContextBlock(VB.langName(o.targetLang), 'translate') : '',
+            styleBlock: o.styleGuide ? VB.getStyleBlock(VB.langName(o.targetLang), 'translate') : '',
+            prevTail,
+            tagSfx: !o.skipSfx && VB.data.bilingual.tagSfxInPrompt,
+            sfxTag: VB.data.bilingual.sfxTag
+          })
+        }],
+        generationConfig: { temperature: 0.35 },
+        signal: ac.signal,
         shouldStop: () => stopFlag,
         onStatus: setStatus
       });
-      chunks.push(txt);
+
+      return { name: img.name, source: lines.join('\n'), translated: VB.splitLines(translated).join('\n') };
+    } finally {
+      clearTimeout(timer);
     }
-    let source = dedupJoin(chunks);
-    if (!source || source === '[NO TEXT]') return { name: img.name, source: '', translated: '', empty: true };
-
-    const lines = VB.splitLines(source);
-    const ctxBlock = o.useContext ? VB.buildContextBlock(VB.langName(o.targetLang), 'translate') : '';
-    const styleBlock = o.styleGuide ? VB.getStyleBlock(VB.langName(o.targetLang), 'translate') : '';
-
-    const translated = await VB.callGemini({
-      model: o.model,
-      parts: [{
-        text: VB.buildTranslatePrompt({
-          sourceLang: o.sourceLang, targetLang: o.targetLang,
-          text: lines.join('\n'), lineCount: lines.length,
-          contextBlock: ctxBlock, styleBlock, prevTail,
-          tagSfx: !o.skipSfx && VB.data.bilingual.tagSfxInPrompt,
-          sfxTag: VB.data.bilingual.sfxTag
-        })
-      }],
-      generationConfig: { temperature: 0.35 },
-      shouldStop: () => stopFlag,
-      onStatus: setStatus
-    });
-
-    return { name: img.name, source: lines.join('\n'), translated: VB.splitLines(translated).join('\n') };
   }
 
-  /** Noi ket qua OCR cua cac lat cat, bo dong trung lap o vung chong lan */
-  function dedupJoin(chunks) {
-    const out = [];
-    chunks.forEach(ch => {
-      VB.splitLines(ch).forEach(l => {
-        if (out.length && out.slice(-3).some(p => p === l)) return;
-        out.push(l);
-      });
-    });
-    return out.join('\n');
-  }
-
-  // ---------- ket qua ----------
-  function chapterText(c) {
-    const o = readOptions();
-    return VB.FMT.buildChapterText(c.name, c.pages.map((p, i) => ({
-      no: i + 1, name: p ? p.name : `image-${i + 1}`,
-      lines: p && p.translated ? VB.splitLines(p.translated) : [],
-      source: p && p.source ? VB.splitLines(p.source) : [],
-      error: p && p.error ? p.error : ''
-    })), { bilingual: o.bilingual });
-  }
-
-
-  function renderResults() {
-    const box = $('b-results');
-    const done = chapters.filter(c => c.pages && c.pages.length);
-    box.innerHTML = done.length ? '' : '<span class="vb-hint">Chưa có kết quả.</span>';
-    done.forEach(c => {
-      const div = document.createElement('details');
-      div.className = 'vb-result';
-      div.innerHTML = `
-        <summary>${escapeHtml(c.name)} — ${c.done}/${c.total} trang</summary>
-        <div class="vb-row">
-          <button class="vb-btn" data-dl="${c.id}">⬇ .txt</button>
-          <button class="vb-btn" data-dx="${c.id}">⬇ .docx</button>
-          <button class="vb-btn" data-cp="${c.id}">Copy</button>
-        </div>
-        <textarea rows="16" data-ta="${c.id}">${escapeHtml(chapterText(c))}</textarea>`;
-      box.appendChild(div);
-    });
-    box.onclick = async e => {
-      const dl = e.target.closest('[data-dl]'), dx = e.target.closest('[data-dx]'), cp = e.target.closest('[data-cp]');
-      const id = (dl || dx || cp) && (dl || dx || cp).dataset[dl ? 'dl' : dx ? 'dx' : 'cp'];
-      if (!id) return;
-      const ta = document.querySelector(`[data-ta="${id}"]`);
-      const c = find(id);
-      const content = ta ? ta.value : chapterText(c);
-      const fname = safeName(c.name);
-      if (dl) downloadText(content, fname + '.txt');
-      if (dx) downloadText(content, fname + '.txt');   // .docx: dung nut o trang chinh neu can OOXML
-      if (cp) { try { await navigator.clipboard.writeText(content); setStatus('Đã copy ' + c.name); } catch (err) { setStatus('Copy thất bại'); } }
-    };
-  }
-
-  const safeName = n => String(n).replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, ' ').trim().slice(0, 80);
-
-  function downloadText(content, filename) {
-    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = filename;
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }
-
-  async function zipAll() {
-    const done = chapters.filter(c => c.pages && c.pages.length);
-    if (!done.length) return alert('Chưa có kết quả nào.');
-    const zip = new JSZip();
-    done.forEach(c => {
-      const ta = document.querySelector(`[data-ta="${c.id}"]`);
-      zip.file(safeName(c.name) + '.txt', ta ? ta.value : chapterText(c));
-    });
-    const blob = await zip.generateAsync({ type: 'blob' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = safeName(VB.data.context.title || 'visionbox-batch') + '.zip';
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1500);
-  }
 
   // ---------- options ----------
   function readOptions() {
