@@ -149,5 +149,3 @@ a.vb-studio-tab-ghost { font-weight: 500; opacity: .75; }
   font-size: 13px; opacity: 0; pointer-events: none; transition: opacity .18s, transform .18s; z-index: 999;
 }
 .vb-toast.is-on { opacity: 1; transform: translateX(-50%) translateY(0); }
-
-
