@@ -1,919 +1,1210 @@
-/* vb-batch.js — VisionBox · Dich hang loat nhieu chuong tu file .zip
- *
- * Viet lai hoan chinh (thay the ban cu):
- *  - Bo hoan toan phan khai bao trung lap `const on` + `function init()` o cuoi
- *    file (chinh la SyntaxError "Identifier 'on' has already been declared"
- *    lam ca file khong chay -> tinh nang dich hang loat "im lang").
- *  - Bo sung handler `change` cho #b-zip (truoc day chi keo-tha moi nap duoc zip).
- *  - Bo sung cac ham bi goi nhung chua he ton tai: zipAll(), downloadText(),
- *    safeName(), dedupJoin().
- *  - fillOptions() gio KHONG lam select rong khi gia tri da luu khong co trong
- *    danh sach option (vd model gemini-3.1-flash-lite tren studio.html) - se tu
- *    them option do vao thay vi de model trong roi goi API loi.
- *  - Tu chay duoc ca khi vb-core.js / vb-format.js thieu ham: moi thu VB.* deu
- *    co ban du phong ngay trong file nay.
- *
- * Yeu cau DOM: #b-drop #b-zip #b-zipinfo #b-model #b-type #b-src #b-dst #b-conc
- * #b-delay #b-width #b-skipsfx #b-style #b-slice #b-bi #b-ctx #b-ctxinfo
- * #b-keyinfo #b-all #b-none #b-invert #b-filter #b-start #b-stop #b-progress
- * #b-status #b-list #b-zipall #b-copyall #b-results  (co trong batch.html va
- * trong panel [data-panel="batch"] cua studio.html).
- */
-(() => {
+/* =============================================================================
+ * vb-batch.js — VisionBox Studio · Tab "Dịch hàng loạt"
+ * Phụ thuộc: jszip.min.js (bắt buộc), vb-core.js (tuỳ chọn), style-guide.js (tuỳ chọn)
+ * Mọi thứ lấy từ VB đều có fallback nội bộ => chạy độc lập được.
+ * ========================================================================== */
+(function () {
   'use strict';
 
-  // ================== tien ich DOM ==================
+  if (!document.getElementById('b-list')) return; // không ở trang studio thì thôi
+
+  const VB = (window.VB = window.VB || {});
   const $ = (id) => document.getElementById(id);
-  const on = (id, ev, fn) => { const el = $(id); if (el) el.addEventListener(ev, fn); return el; };
-  const escapeHtml = (s) => String(s).replace(/[&<>"']/g, m =>
-    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+  const CFG_KEY = 'visionbox_batch_cfg_v1';
+  const API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
+  const IMG_RE = /\.(jpe?g|png|webp|bmp|gif|avif|tiff?)$/i;
+  const coll = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
-  // ================== lop bao VB (co ban du phong) ==================
-  // vb-core.js co the chua nap / thieu ham -> moi thu duoi day deu uu tien dung
-  // ban that cua VB, khong co thi dung ban du phong ngay trong file nay.
-  const LS_OPTS = 'vb_batch_options_v1';
-
-  const DEF_BATCH = {
-    model: 'gemini-2.5-flash', contentType: 'manga',
-    sourceLang: 'ja', targetLang: 'vi',
-    concurrency: 1, delayMs: 700, maxWidth: 1400,
-    skipSfx: false, styleGuide: true, sliceTall: true,
-    bilingual: true, useContext: true
+  /* ---------------------------------------------------------------- state */
+  const S = {
+    chapters: [],      // {id,name,pages:[{name,blob}],sel,status,result,err}
+    running: false,
+    abort: null,
+    done: 0,
+    total: 0,
+    zipNames: []
   };
-  const DEF_BI = { enabled: true, sfxTag: '(sfx)', tagSfxInPrompt: true };
 
-  let localData = { batch: Object.assign({}, DEF_BATCH), bilingual: Object.assign({}, DEF_BI) };
-  try {
-    const raw = localStorage.getItem(LS_OPTS);
-    if (raw) Object.assign(localData.batch, JSON.parse(raw) || {});
-  } catch (_) {}
+  /* ============================== 1. API KEYS ============================== */
+  const cooldown = new Map();          // key -> timestamp hết phạt
 
-  function store() {
-    const d = (window.VB && window.VB.data) ? window.VB.data : localData;
-    d.batch = Object.assign({}, DEF_BATCH, d.batch || {});
-    d.bilingual = Object.assign({}, DEF_BI, d.bilingual || {});
-    return d;
-  }
-  function persist() {
-    if (window.VB && typeof window.VB.save === 'function') { try { window.VB.save(); return; } catch (_) {} }
-    try { localStorage.setItem(LS_OPTS, JSON.stringify(store().batch)); } catch (_) {}
-  }
-
-  const LANG_NAMES = { ko: 'Korean', ja: 'Japanese', zh: 'Chinese', en: 'English', vi: 'Vietnamese' };
-
-  function langName(code) {
-    if (window.VB && typeof window.VB.langName === 'function') return window.VB.langName(code);
-    return LANG_NAMES[code] || code;
-  }
-  function sleep(ms) {
-    if (window.VB && typeof window.VB.sleep === 'function') return window.VB.sleep(ms);
-    return new Promise(r => setTimeout(r, ms));
-  }
-  function naturalCompare(a, b) {
-    if (window.VB && typeof window.VB.naturalCompare === 'function') return window.VB.naturalCompare(a, b);
-    return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' });
-  }
-  function splitLines(s) {
-    if (window.VB && typeof window.VB.splitLines === 'function') return window.VB.splitLines(s);
-    return String(s || '').split(/\r\n|\r|\n/).map(l => l.trim()).filter(l => l.length > 0);
-  }
-  function mimeOf(name) {
-    if (window.VB && typeof window.VB.mimeOf === 'function') return window.VB.mimeOf(name);
-    const ext = String(name).toLowerCase().split('.').pop();
-    return ({ png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp',
-      heic: 'image/heic', heif: 'image/heif', bmp: 'image/bmp', gif: 'image/gif' })[ext] || 'image/jpeg';
-  }
-  function getKeys() {
-    if (window.VB && typeof window.VB.getKeys === 'function') {
-      const k = window.VB.getKeys();
-      if (Array.isArray(k) && k.length) return k;
+  function readKeys() {
+    // ưu tiên kho key của vb-core / vb-ui (tab ⚙ Nâng cao → API Keys)
+    const src = [
+      () => VB.keys && typeof VB.keys.list === 'function' && VB.keys.list(),
+      () => VB.keys && Array.isArray(VB.keys.all) && VB.keys.all,
+      () => typeof VB.getKeys === 'function' && VB.getKeys()
+    ];
+    for (const f of src) {
+      try { const k = f(); if (Array.isArray(k) && k.length) return k.filter(Boolean); } catch (_) {}
     }
-    const out = [];
-    const d = (window.VB && window.VB.data) || {};
-    (Array.isArray(d.keys) ? d.keys : []).forEach(k => {
-      const v = typeof k === 'string' ? k : (k && k.key);
-      if (v && v.trim()) out.push(v.trim());
-    });
-    if (!out.length) {
-      const el = $('api-key-input');
-      if (el && el.value.trim()) out.push(el.value.trim());
-    }
-    if (!out.length) {
+    const LS = ['visionbox_api_keys', 'vb_api_keys', 'visionbox_keys'];
+    for (const name of LS) {
       try {
-        const cfg = JSON.parse(localStorage.getItem('visionbox_config_cache_v1') || '{}');
-        if (cfg.apiKey && String(cfg.apiKey).trim()) out.push(String(cfg.apiKey).trim());
+        const raw = localStorage.getItem(name);
+        if (!raw) continue;
+        const v = JSON.parse(raw);
+        if (Array.isArray(v)) { const k = v.map(x => (typeof x === 'string' ? x : x && x.key)).filter(Boolean); if (k.length) return k; }
       } catch (_) {}
     }
+    for (const name of ['visionbox_api_key', 'gemini_api_key', 'apiKey']) {
+      try { const s = localStorage.getItem(name); if (s && s.trim()) return [s.trim()]; } catch (_) {}
+    }
+    return [];
+  }
+
+  function pickKey() {
+    const keys = readKeys();
+    if (!keys.length) return null;
+    const now = Date.now();
+    const free = keys.filter(k => !cooldown.get(k) || cooldown.get(k) < now);
+    const pool = free.length ? free : keys;
+    const i = (pickKey._i = ((pickKey._i || 0) + 1)) % pool.length;
+    return pool[i];
+  }
+
+  function penalize(key, ms) {
+    cooldown.set(key, Date.now() + (ms || 45000));
+    try { VB.keys && typeof VB.keys.penalize === 'function' && VB.keys.penalize(key, ms); } catch (_) {}
+  }
+
+  function refreshKeyInfo() {
+    const n = readKeys().length;
+    const el = $('b-keyinfo');
+    if (el) el.textContent = n ? `· ${n} API key sẵn sàng` : '· chưa có API key — mở ⚙ Nâng cao → API Keys';
+  }
+
+  /* ============================== 2. NGỮ CẢNH ============================== */
+  function getContext() {
+    const src = [
+      () => VB.context && typeof VB.context.get === 'function' && VB.context.get(),
+      () => VB.context && typeof VB.context.current === 'string' && VB.context.current,
+      () => typeof VB.getContext === 'function' && VB.getContext()
+    ];
+    for (const f of src) {
+      try { const c = f(); if (c) return typeof c === 'string' ? c : (c.text || c.content || ''); } catch (_) {}
+    }
+    for (const name of ['visionbox_context_current', 'vb_context_current', 'visionbox_context']) {
+      try {
+        const raw = localStorage.getItem(name);
+        if (!raw) continue;
+        if (raw.trim().startsWith('{')) { const o = JSON.parse(raw); if (o && (o.text || o.content)) return o.text || o.content; }
+        else if (raw.trim()) return raw;
+      } catch (_) {}
+    }
+    return '';
+  }
+
+  function refreshCtxInfo() {
+    const c = getContext();
+    const el = $('b-ctxinfo');
+    if (!el) return;
+    el.textContent = c
+      ? `· ngữ cảnh hiện hành: ${c.length.toLocaleString('vi-VN')} ký tự`
+      : '· chưa có ngữ cảnh — sang tab “Tạo ngữ cảnh” hoặc bỏ tick ô này';
+  }
+
+  function styleGuideText() {
+    const g = window.STYLE_GUIDE || window.VB_STYLE_GUIDE || VB.styleGuide || window.styleGuide;
+    if (!g) return '';
+    if (typeof g === 'string') return g;
+    return g.text || g.prompt || g.content || '';
+  }
+
+  /* ============================== 3. PROMPT ================================ */
+  const LANG = { ja: 'tiếng Nhật', ko: 'tiếng Hàn', zh: 'tiếng Trung', en: 'tiếng Anh', vi: 'tiếng Việt' };
+
+  function localPrompt(o) {
+    const src = LANG[o.src] || o.src, dst = LANG[o.dst] || o.dst;
+    const order = o.type === 'webtoon'
+      ? 'Webtoon cuộn dọc: đọc TỪ TRÊN XUỐNG DƯỚI. Khi hai bóng thoại nằm ngang hàng nhau thì đọc trái → phải.'
+      : 'Manga khung Nhật: đọc TỪ PHẢI SANG TRÁI, TỪ TRÊN XUỐNG DƯỚI. Trong một khung, bóng thoại bên phải luôn đọc trước bóng bên trái; bóng cao hơn đọc trước bóng thấp hơn.';
+
+    const p = [];
+    p.push(`Bạn là dịch giả truyện tranh chuyên nghiệp, dịch ${src} → ${dst}. Bạn ĐANG NHÌN THẤY trang truyện đính kèm, hãy dùng hình ảnh để hiểu bối cảnh chứ không chỉ đọc chữ.`);
+    p.push('');
+    p.push('QUY TẮC THỨ TỰ');
+    p.push('1. ' + order);
+    p.push('2. Bóng thoại phụ (đuôi nối tiếp cùng một người nói) gộp chung vào một mục, ngăn bằng dấu " — ".');
+    p.push('3. Không bỏ sót bất kỳ chữ nào có trong trang: thoại, nội tâm, narration, chữ ngoài bóng, biển hiệu, tin nhắn điện thoại.');
+    p.push('');
+    p.push('QUY TẮC XƯNG HÔ (bắt buộc nhìn ảnh mới quyết định)');
+    p.push('- Quan sát tuổi tác, trang phục, đồng phục, chức vụ, biểu cảm, khoảng cách cơ thể và vị thế của nhân vật trong khung để chọn cặp xưng hô tiếng Việt cho đúng.');
+    p.push('- Giữ nhất quán cặp xưng hô giữa cùng hai nhân vật trong suốt trang; nếu quan hệ thay đổi (cãi nhau, thân mật hơn) mới được đổi và phải hợp lý.');
+    p.push('- Hậu tố kính ngữ (-san, -kun, -senpai, 님…) không dịch máy móc mà chuyển thành xưng hô Việt tương đương.');
+    p.push('- Nếu ảnh không đủ dữ kiện, chọn cặp trung tính và ghi chú ở cuối bằng dòng "[GHI CHÚ] ...".');
+    p.push('');
+    p.push('QUY TẮC VĂN PHONG');
+    p.push('- Dịch thoát, giữ đúng sắc thái và nhịp truyện tranh; câu ngắn, tự nhiên như người Việt nói.');
+    p.push('- Giữ nguyên tên riêng, tên chiêu thức theo bảng thuật ngữ nếu có trong phần NGỮ CẢNH.');
+    p.push(o.skipSfx ? '- BỎ QUA hoàn toàn hiệu ứng âm thanh (SFX).' : '- Dịch cả SFX, đánh dấu [SFX].');
+    if (o.style) { const sg = styleGuideText(); if (sg) { p.push(''); p.push('ELEMENTS OF STYLE'); p.push(sg.slice(0, 4000)); } }
+    if (o.context) { p.push(''); p.push('===== NGỮ CẢNH TÁC PHẨM (ưu tiên tuyệt đối) ====='); p.push(o.context.slice(0, 20000)); p.push('===== HẾT NGỮ CẢNH ====='); }
+    if (o.sliced) { p.push(''); p.push(`LƯU Ý: trang này được cắt thành ${o.sliceCount} mảnh theo chiều dọc, bạn đang xem lần lượt các mảnh của CÙNG một trang. Hãy đọc liền mạch, không lặp lại phần chồng lấn giữa hai mảnh.`); }
+    p.push('');
+    p.push('ĐỊNH DẠNG ĐẦU RA — chỉ xuất danh sách, không thêm lời dẫn, không markdown:');
+    if (o.bilingual) {
+      p.push('1. [LOẠI][Tên nhân vật hoặc "?"]');
+      p.push('   > nguyên văn');
+      p.push('   bản dịch');
+    } else {
+      p.push('1. [LOẠI][Tên nhân vật hoặc "?"] bản dịch');
+    }
+    p.push('LOẠI ∈ {THOẠI, NỘI TÂM, NARRATION, CHỮ NỀN' + (o.skipSfx ? '' : ', SFX') + '}.');
+    p.push('Nếu trang không có chữ nào, xuất đúng một dòng: [TRANG TRỐNG]');
+    return p.join('\n');
+  }
+
+  function buildPrompt(o) {
+    const cands = [
+      VB.buildTranslatePrompt, VB.buildTranslationPrompt,
+      VB.prompts && VB.prompts.translate, VB.prompt && VB.prompt.translate
+    ];
+    for (const f of cands) {
+      if (typeof f === 'function') {
+        try { const s = f(o); if (s && typeof s === 'string' && s.length > 80) return s; } catch (_) {}
+      }
+    }
+    return localPrompt(o);
+  }
+
+  /* ============================== 4. ẢNH =================================== */
+  async function loadBitmap(blob) {
+    if (window.createImageBitmap) { try { return await createImageBitmap(blob); } catch (_) {} }
+    return await new Promise((res, rej) => {
+      const url = URL.createObjectURL(blob), im = new Image();
+      im.onload = () => { URL.revokeObjectURL(url); res(im); };
+      im.onerror = () => { URL.revokeObjectURL(url); rej(new Error('không giải mã được ảnh')); };
+      im.src = url;
+    });
+  }
+
+  function canvasToB64(cv) {
+    const url = cv.toDataURL('image/jpeg', 0.86);
+    return url.slice(url.indexOf(',') + 1);
+  }
+
+  // trả về mảng base64 (1 phần tử nếu không cắt)
+  async function imageToParts(blob, maxW, allowSlice) {
+    const bmp = await loadBitmap(blob);
+    const ow = bmp.width || bmp.naturalWidth, oh = bmp.height || bmp.naturalHeight;
+    const scale = ow > maxW ? maxW / ow : 1;
+    const w = Math.max(1, Math.round(ow * scale)), h = Math.max(1, Math.round(oh * scale));
+
+    const needSlice = allowSlice && h > w * 2.6;
+    if (!needSlice) {
+      const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+      cv.getContext('2d').drawImage(bmp, 0, 0, w, h);
+      if (bmp.close) bmp.close();
+      return [canvasToB64(cv)];
+    }
+    const sliceH = Math.round(w * 1.7), ov = Math.round(sliceH * 0.08);
+    const out = [];
+    for (let y = 0; y < h; y += sliceH - ov) {
+      const hh = Math.min(sliceH, h - y);
+      if (hh < 40 && out.length) break;
+      const cv = document.createElement('canvas'); cv.width = w; cv.height = hh;
+      cv.getContext('2d').drawImage(bmp, 0, y / scale, ow, hh / scale, 0, 0, w, hh);
+      out.push(canvasToB64(cv));
+      if (y + hh >= h) break;
+    }
+    if (bmp.close) bmp.close();
     return out;
   }
-  function hasContext() {
-    if (window.VB && typeof window.VB.hasContext === 'function') return !!window.VB.hasContext();
-    return false;
-  }
-  function contextCharCount() {
-    if (window.VB && typeof window.VB.contextCharCount === 'function') return window.VB.contextCharCount() || 0;
-    return 0;
-  }
-  function contextBlock(target, mode) {
-    if (window.VB && typeof window.VB.buildContextBlock === 'function') {
-      try { return window.VB.buildContextBlock(target, mode) || ''; } catch (_) {}
-    }
-    return '';
-  }
-  function styleBlock(target, mode) {
-    if (window.VB && typeof window.VB.getStyleBlock === 'function') {
-      try { return window.VB.getStyleBlock(target, mode) || ''; } catch (_) {}
-    }
-    if (window.STYLE_SKILL && typeof window.STYLE_SKILL.buildBlock === 'function') {
-      try { return '\n' + window.STYLE_SKILL.buildBlock(target, mode) + '\n'; } catch (_) {}
-    }
-    return '';
-  }
-  function mergeBilingual(src, dst) {
-    if (window.VB && typeof window.VB.mergeBilingual === 'function') {
-      try { return window.VB.mergeBilingual(src, dst); } catch (_) {}
-    }
-    const s = splitLines(src), t = splitLines(dst);
-    const n = Math.max(s.length, t.length);
-    const out = [];
-    for (let i = 0; i < n; i++) {
-      if (t[i]) out.push(t[i]);
-      if (s[i]) out.push('*' + s[i]);
-    }
-    return out.join('\n');
-  }
 
-  // ================== prompt (du phong khi vb-core thieu) ==================
-  function buildOcrPrompt(o) {
-    if (window.VB && typeof window.VB.buildOcrPrompt === 'function') return window.VB.buildOcrPrompt(o);
-    const lang = langName(o.sourceLang);
-    const order = o.contentType === 'manga'
-      ? 'standard MANGA reading order: top to bottom, RIGHT to LEFT'
-      : 'standard WEBTOON reading order: top to bottom, LEFT to RIGHT';
-    const sfx = o.skipSfx
-      ? 'Completely IGNORE sound-effect/onomatopoeia lettering drawn onto the artwork with no enclosing bubble outline. Output only text inside bubbles/caption boxes.'
-      : `Include sound-effect/onomatopoeia lettering as its own line, in its true reading position${o.sfxTag ? `, prefixed with "${o.sfxTag} "` : ''}.`;
-    return `OCR every speech bubble / caption box on this ${lang} comic page.
-
-RULES:
-1. Follow ${order}. This is mandatory.
-2. ALL text inside ONE bubble outline = ONE single output line, even when it visually wraps onto several rows (join wrapped fragments with a single space). Two different bubbles = two different lines. This is the most common mistake - check it carefully.
-3. Do NOT translate. Extract the original ${lang} text exactly as written, character for character.
-4. Skip a bubble entirely if it has no legible text; never write a placeholder like "(blank)" / "(no text)".
-5. ${sfx}
-6. If the page has no text at all, answer exactly: [NO TEXT]
-
-Return ONLY the extracted lines, one bubble per line. No titles, numbering, or commentary.`;
-  }
-
-  function buildTranslatePrompt(o) {
-    if (window.VB && typeof window.VB.buildTranslatePrompt === 'function') return window.VB.buildTranslatePrompt(o);
-    const s = langName(o.sourceLang), t = langName(o.targetLang);
-    const prev = o.prevTail ? `\nPREVIOUS PAGE (context only, do NOT translate or output these):\n${o.prevTail}\n` : '';
-    const sfx = o.tagSfx && o.sfxTag
-      ? `\nLines starting with "${o.sfxTag}" are sound effects: keep that prefix and render the sound briefly in ${t}.`
-      : '';
-    return `You are an elite comic localizer translating ${s} to ${t}.
-
-Below is the OCR text of one comic page, one speech bubble per line, together with the page image.
-${prev}
-OCR text (${o.lineCount} lines):
-${o.text}
-
-RULES:
-1. Output EXACTLY ${o.lineCount} lines, one translation per source line, in the same order. Never merge, split, add or drop a line.
-2. Translate the contextual meaning, not word for word. Use natural, punchy spoken ${t}, matching each character's tone shown in the art.
-3. Use normal sentence case even if the source is ALL CAPS.
-4. Never output notes, explanations, numbering, or placeholders like "(blank)".${sfx}
-${contextBlockSafe(o)}${styleBlockSafe(o)}
-Return ONLY the ${o.lineCount} translated lines.`;
-  }
-  const contextBlockSafe = (o) => o.contextBlock ? `\n${o.contextBlock}\n` : '';
-  const styleBlockSafe = (o) => o.styleBlock ? `\n${o.styleBlock}\n` : '';
-
-  // ================== anh -> parts (du phong) ==================
-  async function imageToParts(blob, opt) {
-    if (window.VB && typeof window.VB.imageToParts === 'function') return window.VB.imageToParts(blob, opt);
-    return localImageToParts(blob, opt);
-  }
-
-  function blobToBase64(blob) {
-    return new Promise((res, rej) => {
-      const fr = new FileReader();
-      fr.onload = () => res(String(fr.result).split(',')[1] || '');
-      fr.onerror = () => rej(fr.error || new Error('Không đọc được ảnh'));
-      fr.readAsDataURL(blob);
-    });
-  }
-
-  async function loadBitmap(blob) {
-    if (typeof createImageBitmap === 'function') {
-      try { return await createImageBitmap(blob); } catch (_) {}
-    }
-    return await new Promise((res, rej) => {
-      const url = URL.createObjectURL(blob);
-      const img = new Image();
-      img.onload = () => { URL.revokeObjectURL(url); res(img); };
-      img.onerror = () => { URL.revokeObjectURL(url); rej(new Error('Ảnh không hợp lệ hoặc định dạng không hỗ trợ')); };
-      img.src = url;
-    });
-  }
-
-  const OVERLAP = 90; // px chong nhau giua 2 manh de khong cat doi bong thoai
-
-  async function localImageToParts(blob, opt) {
-    const maxWidth = Math.max(300, opt.maxWidth || 1400);
-    const sliceHeight = Math.max(1200, opt.sliceHeight || 3000);
-    let bmp;
-    try { bmp = await loadBitmap(blob); }
-    catch (_) { return [{ inline_data: { mime_type: blob.type || 'image/jpeg', data: await blobToBase64(blob) } }]; }
-
-    const scale = Math.min(1, maxWidth / (bmp.width || maxWidth));
-    const w = Math.max(1, Math.round((bmp.width || maxWidth) * scale));
-    const h = Math.max(1, Math.round((bmp.height || maxWidth) * scale));
-
-    const cuts = [];
-    if (opt.sliceTall && h > sliceHeight) {
-      let y = 0;
-      while (y < h) {
-        const hh = Math.min(sliceHeight, h - y);
-        cuts.push({ y, h: hh });
-        if (y + hh >= h) break;
-        y += Math.max(1, hh - OVERLAP);
-      }
-    } else {
-      cuts.push({ y: 0, h });
-    }
-
-    const parts = [];
-    for (const c of cuts) {
-      const cv = document.createElement('canvas');
-      cv.width = w; cv.height = c.h;
-      const ctx = cv.getContext('2d');
-      ctx.drawImage(bmp, 0, Math.round(c.y / scale), bmp.width, Math.round(c.h / scale), 0, 0, w, c.h);
-      const data = cv.toDataURL('image/jpeg', 0.9).split(',')[1];
-      parts.push({ inline_data: { mime_type: 'image/jpeg', data } });
-    }
-    if (bmp.close) try { bmp.close(); } catch (_) {}
-    return parts;
-  }
-
-  // ================== goi Gemini (du phong) ==================
-  const RETRY_WAIT = [4000, 8000, 15000, 25000, 40000];
-
-  async function callGemini(cfg) {
-    if (window.VB && typeof window.VB.callGemini === 'function') return window.VB.callGemini(cfg);
-    return localCallGemini(cfg);
-  }
-
-  async function localCallGemini({ model, parts, generationConfig, signal, shouldStop, onStatus }) {
-    const keys = getKeys();
-    if (!keys.length) throw new Error('Chưa có API key');
-    if (!model) throw new Error('Chưa chọn model');
-
-    const body = {
-      contents: [{ parts }],
-      generationConfig: Object.assign({ temperature: 0.2, topP: 0.9, topK: 40, maxOutputTokens: 8192 }, generationConfig || {})
-    };
+  /* ============================== 5. GỌI API =============================== */
+  async function callModel(model, parts, signal) {
+    const keys = readKeys();
+    if (!keys.length) throw new Error('Chưa cấu hình API key.');
     let lastErr = null;
+    const tries = Math.min(6, Math.max(3, keys.length + 1));
 
-    for (let ki = 0; ki < keys.length; ki++) {
-      for (let attempt = 0; attempt <= RETRY_WAIT.length; attempt++) {
-        if (shouldStop && shouldStop()) throw new Error('Đã dừng theo yêu cầu');
-        let res;
-        try {
-          res = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(keys[ki])}`,
-            { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal }
-          );
-        } catch (e) {
-          if (e && e.name === 'AbortError') throw e;
-          lastErr = e; 
-          if (attempt < RETRY_WAIT.length) { await sleep(RETRY_WAIT[attempt]); continue; }
-          break;
+    for (let t = 0; t < tries; t++) {
+      if (signal && signal.aborted) throw new Error('Đã dừng');
+      const key = pickKey();
+      if (!key) throw new Error('Không còn API key khả dụng.');
+      try {
+        const res = await fetch(`${API_BASE}/${encodeURIComponent(model)}:generateContent`, {
+          method: 'POST',
+          signal,
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+          body: JSON.stringify({
+            contents: [{ role: 'user', parts }],
+            generationConfig: { temperature: 0.35, topP: 0.95, maxOutputTokens: 8192 },
+            safetySettings: ['HARM_CATEGORY_HARASSMENT', 'HARM_CATEGORY_HATE_SPEECH',
+              'HARM_CATEGORY_SEXUALLY_EXPLICIT', 'HARM_CATEGORY_DANGEROUS_CONTENT']
+              .map(c => ({ category: c, threshold: 'BLOCK_NONE' }))
+          })
+        });
+
+        if (res.status === 429 || res.status === 503) {
+          penalize(key, res.status === 429 ? 60000 : 20000);
+          lastErr = new Error(`HTTP ${res.status} (quota/quá tải) — đổi key`);
+          await sleep(800 + t * 600);
+          continue;
         }
-
-        if (res.ok) {
-          const data = await res.json();
-          const cand = data.candidates && data.candidates[0];
-          const text = ((cand && cand.content && cand.content.parts) || []).map(p => p.text || '').join('').trim();
-          if (!text) {
-            const why = (data.promptFeedback && data.promptFeedback.blockReason) || (cand && cand.finishReason) || 'trả về rỗng';
-            throw new Error('Gemini ' + why);
-          }
-          return text;
+        if (res.status === 400 || res.status === 403) {
+          penalize(key, 10 * 60000);
+          lastErr = new Error(`HTTP ${res.status} — key không hợp lệ hoặc bị từ chối`);
+          continue;
         }
+        if (!res.ok) { lastErr = new Error('HTTP ' + res.status); await sleep(600); continue; }
 
-        let msg = 'HTTP ' + res.status;
-        try { const j = await res.json(); msg = (j.error && j.error.message) || msg; } catch (_) {}
-        lastErr = new Error(msg);
-
-        if (res.status === 429 || res.status >= 500) {
-          if (attempt < RETRY_WAIT.length) {
-            const s = Math.round(RETRY_WAIT[attempt] / 1000);
-            if (onStatus) onStatus(`Bị giới hạn tốc độ (${res.status}), chờ ${s}s rồi thử lại…`);
-            await sleep(RETRY_WAIT[attempt]);
-            continue;
-          }
-          break; // het luot -> doi sang key khac
+        const data = await res.json();
+        const cand = data && data.candidates && data.candidates[0];
+        const txt = cand && cand.content && Array.isArray(cand.content.parts)
+          ? cand.content.parts.map(p => p.text || '').join('').trim() : '';
+        if (!txt) {
+          const why = (data && data.promptFeedback && data.promptFeedback.blockReason) || (cand && cand.finishReason) || 'rỗng';
+          throw new Error('Model không trả nội dung (' + why + ')');
         }
-        if (res.status === 400 || res.status === 401 || res.status === 403) break; // key/model sai -> doi key
-        throw lastErr;
+        return txt;
+      } catch (e) {
+        if (e.name === 'AbortError') throw new Error('Đã dừng');
+        lastErr = e;
+        await sleep(500 + t * 400);
       }
     }
-    throw lastErr || new Error('Gọi Gemini thất bại');
+    throw lastErr || new Error('Gọi API thất bại');
   }
 
-  // ================== trang thai ==================
-  /** chapters: [{id,name,images:[{name,path,entry}],selected,status,done,total,pages:[],error}] */
-  let chapters = [];
-  let running = false, stopFlag = false;
-  let totalUnits = 0, doneUnits = 0;
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-  const find = (id) => chapters.find(c => c.id === id);
-  const setStatus = (t) => { const el = $('b-status'); if (el) el.textContent = t; };
-
-  function bumpProgress() {
-    doneUnits++;
-    const el = $('b-progress');
-    if (el) el.style.width = totalUnits ? Math.round(doneUnits / totalUnits * 100) + '%' : '0%';
+  /* ============================== 6. NẠP ZIP =============================== */
+  function chapterOf(path) {
+    const parts = path.split('/').filter(Boolean);
+    return parts.length <= 1 ? '(gốc)' : parts.slice(0, -1).join(' / ');
   }
 
-  // ================== nap zip ==================
-  const IMG_RE = /\.(png|jpe?g|webp|heic|heif|bmp|gif)$/i;
-
-  async function loadZips(files) {
-    if (typeof JSZip === 'undefined') { alert('Thiếu jszip.min.js — không đọc được file zip.'); return; }
-    setStatus('Đang đọc file zip…');
+  async function addZip(file) {
+    if (typeof JSZip === 'undefined') { alert('Thiếu jszip.min.js'); return; }
+    setStatus(`Đang đọc ${file.name}…`);
+    const zip = await JSZip.loadAsync(file);
     const map = new Map();
-    const many = files.length > 1;
+    const entries = Object.keys(zip.files).sort(coll.compare);
 
-    for (const file of files) {
-      let zip;
-      try { zip = await JSZip.loadAsync(file); }
-      catch (e) { alert(`Không đọc được ${file.name}: ${e.message}`); continue; }
+    for (const path of entries) {
+      const ent = zip.files[path];
+      if (ent.dir) continue;
+      const base = path.split('/').pop();
+      if (!base || base.startsWith('.') || path.includes('__MACOSX')) continue;
+      if (!IMG_RE.test(base)) continue;
+      const ch = chapterOf(path);
+      if (!map.has(ch)) map.set(ch, []);
+      map.get(ch).push({ name: base, entry: ent });
+    }
+    if (!map.size) { setStatus(`${file.name}: không tìm thấy ảnh nào.`); return; }
 
-      zip.forEach((path, entry) => {
-        if (entry.dir) return;
-        if (/(^|\/)__MACOSX\//.test(path) || /(^|\/)\._/.test(path)) return;
-        if (!IMG_RE.test(path)) return;
-        const segs = path.split('/').filter(Boolean);
-        const fname = segs.pop();
-        const chapName = segs.length ? segs.join(' / ') : '(gốc)';
-        const key = (many ? file.name.replace(/\.zip$/i, '') + ' :: ' : '') + chapName;
-        if (!map.has(key)) map.set(key, []);
-        map.get(key).push({ name: fname, path, entry });
+    S.zipNames.push(file.name);
+    const multi = S.zipNames.length > 1;
+    const zipLabel = file.name.replace(/\.zip$/i, '');
+
+    for (const [ch, list] of map) {
+      list.sort((a, b) => coll.compare(a.name, b.name));
+      const pages = [];
+      for (const it of list) pages.push({ name: it.name, blob: await it.entry.async('blob') });
+      S.chapters.push({
+        id: 'c' + Math.random().toString(36).slice(2, 9),
+        name: multi ? `${zipLabel} / ${ch}` : ch,
+        pages, sel: true, status: 'idle', result: '', err: ''
       });
     }
-
-    chapters = Array.from(map.entries())
-      .sort((a, b) => naturalCompare(a[0], b[0]))
-      .map(([name, imgs], i) => ({
-        id: 'ch' + i,
-        name,
-        images: imgs.sort((x, y) => naturalCompare(x.name, y.name)),
-        selected: true, status: 'idle', done: 0, total: imgs.length, pages: [], error: ''
-      }));
-
-    const info = $('b-zipinfo');
-    if (info) info.textContent = `Đã quét: ${chapters.length} chương · ${chapters.reduce((s, c) => s + c.total, 0)} ảnh.`;
-    renderChapters();
-    renderResults();
-    setStatus(chapters.length ? 'Chọn chương rồi bấm “Bắt đầu dịch”.' : 'Không tìm thấy ảnh nào trong zip.');
+    S.chapters.sort((a, b) => coll.compare(a.name, b.name));
+    renderList();
+    const totalPages = S.chapters.reduce((s, c) => s + c.pages.length, 0);
+    $('b-zipinfo').textContent = `Đã nạp ${S.zipNames.length} file zip · ${S.chapters.length} chương · ${totalPages} trang.`;
+    setStatus('Sẵn sàng dịch.');
   }
 
-  // ================== render danh sach chuong ==================
-  function statusText(c) {
-    return ({
-      idle: 'chờ',
-      running: `đang chạy ${c.done}/${c.total}`,
-      done: `xong ${c.done}/${c.total}`,
-      error: `lỗi: ${c.error || 'không rõ'}`,
-      stopped: `dừng ${c.done}/${c.total}`
-    })[c.status] || '';
-  }
-
-  function refreshBadge(c) {
-    const el = document.querySelector(`[data-badge="${c.id}"]`);
-    if (el) {
-      el.textContent = statusText(c);
-      if (el.parentElement) el.parentElement.className = 'vb-chapter ' + c.status;
-    }
-  }
-
-  function renderChapters() {
+  /* ============================== 7. UI LIST =============================== */
+  function renderList() {
     const box = $('b-list');
-    if (!box) return;
-    const filterEl = $('b-filter');
-    const filter = ((filterEl && filterEl.value) || '').toLowerCase();
+    const kw = ($('b-filter').value || '').trim().toLowerCase();
     box.innerHTML = '';
+    if (!S.chapters.length) { box.innerHTML = '<p class="vb-hint">Chưa nạp chương nào.</p>'; return; }
 
-    const list = chapters.filter(c => !filter || c.name.toLowerCase().includes(filter));
-    if (!list.length) {
-      box.innerHTML = '<span class="vb-hint">Chưa có chương nào (hoặc bộ lọc không khớp).</span>';
-      return;
-    }
-
-    list.forEach(c => {
-      const row = document.createElement('div');
-      row.className = 'vb-chapter ' + c.status;
-      row.innerHTML = `
-        <label class="vb-inline"><input type="checkbox" data-sel="${c.id}" ${c.selected ? 'checked' : ''}> <b>${escapeHtml(c.name)}</b></label>
-        <span class="vb-hint">${c.total} ảnh</span>
-        <span class="vb-badge" data-badge="${c.id}">${escapeHtml(statusText(c))}</span>
-        <span class="vb-spacer"></span>
-        <button class="vb-btn vb-btn-icon" data-one="${c.id}" title="Chỉ dịch chương này">▶</button>`;
+    S.chapters.forEach(c => {
+      if (kw && !c.name.toLowerCase().includes(kw)) return;
+      const row = document.createElement('label');
+      row.className = 'vb-chapter' + (c.status === 'run' ? ' is-run' : c.status === 'done' ? ' is-done' : c.status === 'err' ? ' is-err' : '');
+      const cb = document.createElement('input');
+      cb.type = 'checkbox'; cb.checked = c.sel;
+      cb.addEventListener('change', () => { c.sel = cb.checked; updateCounts(); });
+      const nm = document.createElement('span'); nm.className = 'vb-chapter-name'; nm.textContent = c.name;
+      const meta = document.createElement('span'); meta.className = 'vb-hint';
+      meta.textContent = `${c.pages.length} trang` +
+        (c.status === 'done' ? ' · ✔ xong' : c.status === 'err' ? ' · ✘ ' + c.err : c.status === 'run' ? ' · đang dịch…' : '');
+      row.append(cb, nm, meta);
       box.appendChild(row);
     });
-
-    box.onchange = (e) => {
-      const cb = e.target.closest('[data-sel]');
-      if (cb) { const c = find(cb.dataset.sel); if (c) c.selected = cb.checked; }
-    };
-    box.onclick = async (e) => {
-      const b = e.target.closest('[data-one]');
-      if (!b) return;
-      if (running) { setStatus('Đang chạy, vui lòng chờ hoặc bấm Dừng.'); return; }
-      const c = find(b.dataset.one);
-      if (c) await runAll([c]);
-    };
+    updateCounts();
   }
 
-  // ================== ket qua ==================
-  const EMPTY_MARK = '(không có chữ)';
-
-  function buildChapterFallback(name, pages, opt) {
-    const pad = n => String(n).padStart(2, '0');
-    const out = [`=== ${name} ===`, ''];
-    pages.forEach((p, i) => {
-      out.push(`[Trang ${pad(p.no || i + 1)} — ${p.name || 'image'}]`);
-      if (p.error) out.push('⚠ LỖI: ' + p.error);
-      else if (!p.lines || !p.lines.length) out.push(EMPTY_MARK);
-      else if (opt && opt.bilingual && p.source && p.source.length)
-        out.push(mergeBilingual(p.source.join('\n'), p.lines.join('\n')));
-      else out.push(p.lines.join('\n'));
-      out.push('');
-    });
-    return out.join('\n').replace(/\n{3,}/g, '\n\n').trim() + '\n';
+  function updateCounts() {
+    const sel = S.chapters.filter(c => c.sel);
+    const pages = sel.reduce((s, c) => s + c.pages.length, 0);
+    if (!S.running) setStatus(sel.length ? `Đã chọn ${sel.length} chương · ${pages} trang.` : 'Chưa chọn chương nào.');
   }
 
-  function chapterText(c) {
-    const o = readOptions();
-    const pages = (c.pages || []).map((p, i) => ({
-      no: i + 1,
-      name: p ? p.name : `image-${i + 1}`,
-      lines: p && p.translated ? splitLines(p.translated) : [],
-      source: p && p.source ? splitLines(p.source) : [],
-      error: p && p.error ? p.error : ''
-    }));
-    const opt = { bilingual: o.bilingual };
-    try {
-      const build = (window.VB && window.VB.FMT && window.VB.FMT.buildChapterText) || buildChapterFallback;
-      return build(c.name, pages, opt);
-    } catch (e) {
-      console.error('[VB-BATCH] chapterText lỗi:', e);
-      return buildChapterFallback(c.name, pages, opt);
-    }
-  }
+  function setStatus(t) { const el = $('b-status'); if (el) el.textContent = t; }
+  function setProgress(p) { const el = $('b-progress'); if (el) el.style.width = Math.max(0, Math.min(100, p)) + '%'; }
 
-  // Bao render: loi hien thi chi duoc ghi log, KHONG lan ra hang doi dich.
   function renderResults() {
-    try { renderResultsInner(); }
-    catch (e) {
-      console.error('[VB-BATCH] renderResults lỗi:', e);
-      setStatus('Lỗi hiển thị kết quả (hàng đợi vẫn chạy tiếp): ' + e.message);
-    }
+    const box = $('b-results');
+    box.innerHTML = '';
+    const done = S.chapters.filter(c => c.result);
+    if (!done.length) { box.innerHTML = '<p class="vb-hint">Chưa có kết quả.</p>'; return; }
+    done.forEach(c => {
+      const card = document.createElement('div');
+      card.className = 'vb-result';
+      const head = document.createElement('div');
+      head.className = 'vb-row';
+      const h = document.createElement('b'); h.textContent = c.name;
+      const sp = document.createElement('span'); sp.className = 'vb-spacer';
+      const mk = (label, fn) => { const b = document.createElement('button'); b.className = 'vb-btn'; b.textContent = label; b.onclick = fn; return b; };
+      head.append(h, sp,
+        mk('Copy', () => copy(ta.value)),
+        mk('⬇ .txt', () => saveFile(ta.value, 'txt', safeName(c.name))),
+        mk('⬇ .docx', () => saveFile(ta.value, 'docx', safeName(c.name))));
+      const ta = document.createElement('textarea');
+      ta.rows = 12; ta.value = c.result;
+      ta.addEventListener('input', () => { c.result = ta.value; });
+      card.append(head, ta);
+      box.appendChild(card);
+    });
   }
 
-  function renderResultsInner() {
-    const box = $('b-results');
-    if (!box) return;
-    const done = chapters.filter(c => c.pages && c.pages.length);
-    box.innerHTML = done.length ? '' : '<span class="vb-hint">Chưa có kết quả.</span>';
-
-    done.forEach(c => {
-      const div = document.createElement('details');
-      div.className = 'vb-result';
-      div.innerHTML = `
-        <summary>${escapeHtml(c.name)} — ${c.done}/${c.total} trang${c.status === 'error' ? ' ⚠' : ''}</summary>
-        <div class="vb-row">
-          <button class="vb-btn" data-dl="${c.id}">⬇ .txt</button>
-          <button class="vb-btn" data-dx="${c.id}">⬇ .docx</button>
-          <button class="vb-btn" data-cp="${c.id}">Copy</button>
-        </div>
-        <textarea rows="16" data-ta="${c.id}">${escapeHtml(chapterText(c))}</textarea>`;
-      box.appendChild(div);
-    });
-
-    box.onclick = async (e) => {
-      const dl = e.target.closest('[data-dl]');
-      const dx = e.target.closest('[data-dx]');
-      const cp = e.target.closest('[data-cp]');
-      const hit = dl || dx || cp;
-      if (!hit) return;
-      const id = hit.dataset.dl || hit.dataset.dx || hit.dataset.cp;
-      const c = find(id);
-      if (!c) return;
-      const ta = document.querySelector(`[data-ta="${id}"]`);
-      const content = ta ? ta.value : chapterText(c);
-      const fname = safeName(c.name);
-
-      if (dl) downloadText(content, fname + '.txt');
-      if (dx) {
-        if (window.VB && window.VB.FMT && typeof window.VB.FMT.download === 'function') {
-          try { await window.VB.FMT.download(content, fname, 'docx'); }
-          catch (err) { console.error(err); downloadText(content, fname + '.txt'); }
-        } else if (window.fileExport && typeof window.fileExport.save === 'function') {
-          try { await window.fileExport.save(content, 'docx', fname); }
-          catch (err) { console.error(err); downloadText(content, fname + '.txt'); }
-        } else {
-          downloadText(content, fname + '.txt');
-        }
-      }
-      if (cp) {
-        try { await navigator.clipboard.writeText(content); setStatus('Đã copy ' + c.name); }
-        catch (_) { setStatus('Copy thất bại (trình duyệt chặn clipboard).'); }
-      }
+  /* ============================== 8. DỊCH ================================== */
+  function readCfg() {
+    return {
+      model: $('b-model').value,
+      type: $('b-type').value,
+      src: $('b-src').value,
+      dst: $('b-dst').value,
+      conc: Math.max(1, parseInt($('b-conc').value, 10) || 1),
+      delay: Math.max(0, parseInt($('b-delay').value, 10) || 0),
+      width: Math.max(600, parseInt($('b-width').value, 10) || 1400),
+      skipSfx: $('b-skipsfx').checked,
+      style: $('b-style').checked,
+      slice: $('b-slice').checked,
+      bilingual: $('b-bi').checked,
+      useCtx: $('b-ctx').checked
     };
   }
 
-  // ================== tai file ==================
-  function safeName(name) {
-    return String(name || 'chuong')
-      .replace(/[\\/:*?"<>|]+/g, '-')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, 80) || 'chuong';
+  function saveCfg() { try { localStorage.setItem(CFG_KEY, JSON.stringify(readCfg())); } catch (_) {} }
+
+  function loadCfg() {
+    try {
+      const c = JSON.parse(localStorage.getItem(CFG_KEY) || '{}');
+      const set = (id, v) => { const el = $(id); if (el && v !== undefined && v !== null) { if (el.type === 'checkbox') el.checked = !!v; else el.value = v; } };
+      set('b-model', c.model); set('b-type', c.type); set('b-src', c.src); set('b-dst', c.dst);
+      set('b-conc', c.conc); set('b-delay', c.delay); set('b-width', c.width);
+      set('b-skipsfx', c.skipSfx); set('b-style', c.style); set('b-slice', c.slice);
+      set('b-bi', c.bilingual); set('b-ctx', c.useCtx);
+    } catch (_) {}
   }
-  function stamp() {
-    const d = new Date(), p = n => String(n).padStart(2, '0');
-    return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
+
+  async function translatePage(page, idx, cfg, ctx, signal) {
+    const imgs = await imageToParts(page.blob, cfg.width, cfg.slice);
+    const prompt = buildPrompt({
+      src: cfg.src, dst: cfg.dst, type: cfg.type, skipSfx: cfg.skipSfx,
+      style: cfg.style, bilingual: cfg.bilingual, context: ctx,
+      sliced: imgs.length > 1, sliceCount: imgs.length,
+      pageName: page.name, pageIndex: idx + 1
+    });
+    const parts = [{ text: prompt }];
+    imgs.forEach(b64 => parts.push({ inline_data: { mime_type: 'image/jpeg', data: b64 } }));
+    return await callModel(cfg.model, parts, signal);
   }
-  function downloadBlob(blob, filename) {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = filename;
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1500);
+
+  async function runChapter(ch, cfg, ctx, signal) {
+    const out = new Array(ch.pages.length).fill('');
+    let cursor = 0;
+
+    async function worker() {
+      while (true) {
+        if (signal.aborted) return;
+        const i = cursor++;
+        if (i >= ch.pages.length) return;
+        const page = ch.pages[i];
+        try {
+          out[i] = await translatePage(page, i, cfg, ctx, signal);
+        } catch (e) {
+          if (String(e.message).includes('dừng')) return;
+          out[i] = `[LỖI] ${e.message}`;
+        }
+        S.done++;
+        setProgress(S.total ? (S.done / S.total) * 100 : 0);
+        setStatus(`${ch.name} · trang ${Math.min(S.done, S.total)}/${S.total}`);
+        if (cfg.delay) await sleep(cfg.delay);
+      }
+    }
+
+    const n = Math.min(cfg.conc, ch.pages.length);
+    await Promise.all(Array.from({ length: n }, worker));
+
+    const head = `===== ${ch.name} =====\n`;
+    const body = ch.pages.map((p, i) =>
+      `\n--- Trang ${String(i + 1).padStart(3, '0')} · ${p.name} ---\n${out[i] || '[TRỐNG]'}`).join('\n');
+    return head + body + '\n';
   }
-  function downloadText(content, filename) {
-    downloadBlob(new Blob([content], { type: 'text/plain;charset=utf-8' }), filename);
+
+  async function start() {
+    if (S.running) return;
+    const sel = S.chapters.filter(c => c.sel);
+    if (!sel.length) { alert('Chưa chọn chương nào.'); return; }
+    if (!readKeys().length) { alert('Chưa có API key. Mở ⚙ Nâng cao → API Keys để thêm (mỗi dòng một key hoặc import file .txt).'); return; }
+
+    const cfg = readCfg();
+    saveCfg();
+    const ctx = cfg.useCtx ? getContext() : '';
+
+    S.running = true; S.abort = new AbortController();
+    S.done = 0; S.total = sel.reduce((s, c) => s + c.pages.length, 0);
+    $('b-start').disabled = true; $('b-stop').disabled = false;
+    setProgress(0);
+
+    for (const ch of sel) {
+      if (S.abort.signal.aborted) break;
+      ch.status = 'run'; ch.err = ''; renderList();
+      try {
+        ch.result = await runChapter(ch, cfg, ctx, S.abort.signal);
+        ch.status = S.abort.signal.aborted ? 'idle' : 'done';
+      } catch (e) {
+        ch.status = 'err'; ch.err = e.message;
+      }
+      renderList(); renderResults();
+    }
+
+    S.running = false;
+    $('b-start').disabled = false; $('b-stop').disabled = true;
+    setStatus(S.abort.signal.aborted ? 'Đã dừng theo yêu cầu.' : `Hoàn tất ${sel.length} chương · ${S.total} trang.`);
+    setProgress(100);
   }
+
+  /* ============================== 9. XUẤT FILE ============================= */
+  const safeName = (s) => String(s).replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, ' ').trim().slice(0, 120) || 'chuong';
+
+  function download(blob, filename) {
+    const url = URL.createObjectURL(blob), a = document.createElement('a');
+    a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  const XMLH = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
+  const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+
+  async function docxBlob(text) {
+    if (typeof JSZip === 'undefined') throw new Error('Thiếu JSZip');
+    const paras = String(text).split(/\r\n|\r|\n/).map(l =>
+      l.trim() === '' ? '<w:p/>' : `<w:p><w:r><w:t xml:space="preserve">${esc(l)}</w:t></w:r></w:p>`).join('');
+    const zip = new JSZip();
+    zip.file('[Content_Types].xml', XMLH +
+      '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+      '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+      '<Default Extension="xml" ContentType="application/xml"/>' +
+      '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>' +
+      '</Types>');
+    zip.folder('_rels').file('.rels', XMLH +
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+      '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>' +
+      '</Relationships>');
+    zip.folder('word').file('document.xml', XMLH +
+      '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>' + paras +
+      '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1417" w:right="1417" w:bottom="1417" w:left="1417"/></w:sectPr>' +
+      '</w:body></w:document>');
+    return zip.generateAsync({ type: 'blob', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+  }
+
+  async function saveFile(text, format, name) {
+    try {
+      if (window.fileExport && typeof window.fileExport.save === 'function') {
+        const ok = await window.fileExport.save(text, format, name);
+        if (ok) return;
+      }
+      if (format === 'docx') { download(await docxBlob(text), name + '.docx'); return; }
+      download(new Blob([text], { type: 'text/plain;charset=utf-8' }), name + '.' + (format || 'txt'));
+    } catch (e) { alert('Không lưu được file: ' + e.message); }
+  }
+
+  async function copy(text) {
+    try { await navigator.clipboard.writeText(text); flash('Đã copy.'); }
+    catch (_) {
+      const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta);
+      ta.select(); document.execCommand('copy'); ta.remove(); flash('Đã copy.');
+    }
+  }
+
+  function flash(msg) { const old = $('b-status').textContent; setStatus(msg); setTimeout(() => setStatus(old), 1500); }
 
   async function zipAll() {
-    const done = chapters.filter(c => c.pages && c.pages.length);
+    const done = S.chapters.filter(c => c.result);
     if (!done.length) { alert('Chưa có kết quả nào để tải.'); return; }
-    if (typeof JSZip === 'undefined') { alert('Thiếu jszip.min.js'); return; }
-    setStatus('Đang đóng gói .zip…');
     const zip = new JSZip();
     const used = new Set();
     done.forEach(c => {
-      const base = safeName(c.name);
-      let name = base + '.txt', i = 2;
-      while (used.has(name)) name = `${base} (${i++}).txt`;
-      used.add(name);
-      const ta = document.querySelector(`[data-ta="${c.id}"]`);
-      zip.file(name, ta ? ta.value : chapterText(c));
+      let n = safeName(c.name), i = 2;
+      while (used.has(n)) n = safeName(c.name) + ' (' + i++ + ')';
+      used.add(n);
+      zip.file(n + '.txt', c.result);
     });
-    try {
-      const blob = await zip.generateAsync({ type: 'blob' });
-      downloadBlob(blob, `visionbox-batch-${stamp()}.zip`);
-      setStatus(`Đã tải ${done.length} chương (.zip).`);
-    } catch (e) {
-      console.error(e);
-      setStatus('Đóng gói zip thất bại: ' + e.message);
-    }
+    setStatus('Đang nén…');
+    download(await zip.generateAsync({ type: 'blob' }), 'visionbox-ban-dich.zip');
+    setStatus(`Đã tải ${done.length} chương.`);
   }
 
-  async function copyAll() {
-    const all = chapters.filter(c => c.pages && c.pages.length).map(chapterText).join('\n\n');
-    if (!all.trim()) { setStatus('Chưa có kết quả để copy.'); return; }
-    try { await navigator.clipboard.writeText(all); setStatus('Đã copy toàn bộ kết quả.'); }
-    catch (_) { setStatus('Copy thất bại (trình duyệt chặn clipboard).'); }
-  }
-
-  // ================== gop OCR nhieu manh anh ==================
-  // Cac manh anh duoc cat CHONG NHAU (OVERLAP) nen dong dau cua manh sau
-  // thuong lap lai dong cuoi cua manh truoc -> bo trung o ranh gioi, khong bo
-  // trung o giua (thoai lap lai co chu y van duoc giu).
-  function dedupJoin(chunks) {
-    const out = [];
-    chunks.forEach((chunk, ci) => {
-      const lines = splitLines(chunk).filter(l => l !== '[NO TEXT]');
-      let start = 0;
-      if (ci > 0) {
-        const tail = out.slice(-4).map(x => x.toLowerCase());
-        while (start < lines.length && tail.includes(lines[start].toLowerCase())) start++;
-      }
-      for (let i = start; i < lines.length; i++) out.push(lines[i]);
-    });
-    return out.join('\n').trim();
-  }
-
-  // ================== chay hang loat ==================
-  const IMAGE_TIMEOUT_MS = 180000; // 1 anh treo qua 3 phut -> bo qua, khong khoa ca loat
-
-  async function runAll(list) {
-    if (running) return;
-    const targets = list || chapters.filter(c => c.selected);
-    if (!targets.length) { alert('Chưa chọn chương nào.'); return; }
-    if (!getKeys().length) {
-      alert('Chưa có API key. Về trang chính → ⚙ Nâng cao → tab API Keys (hoặc nhập key ở trang chính).');
-      return;
-    }
-    saveOptions();
-
-    running = true; stopFlag = false;
-    const startBtn = $('b-start'), stopBtn = $('b-stop');
-    if (startBtn) startBtn.disabled = true;
-    if (stopBtn) stopBtn.disabled = false;
-
-    totalUnits = targets.reduce((s, c) => s + c.total, 0);
-    doneUnits = 0;
-    const bar = $('b-progress');
-    if (bar) bar.style.width = '0%';
-
-    try {
-      for (const c of targets) {
-        if (stopFlag) break;
-        try {
-          await runChapter(c);
-        } catch (e) {
-          // Mot chuong hong KHONG duoc lam chet hang doi.
-          console.error('[VB-BATCH] chương lỗi:', c.name, e);
-          c.status = 'error';
-          c.error = e.message || String(e);
-          refreshBadge(c);
-        }
-      }
-    } finally {
-      running = false;
-      if (startBtn) startBtn.disabled = false;
-      if (stopBtn) stopBtn.disabled = true;
-      const bad = chapters.filter(c => c.status === 'error').length;
-      setStatus(stopFlag
-        ? 'Đã dừng.'
-        : (bad ? `Hoàn tất, còn ${bad} chương có trang lỗi.` : 'Hoàn tất tất cả chương đã chọn ✔'));
-      renderResults();
-    }
-  }
-
-  async function runChapter(c) {
-    c.status = 'running'; c.done = 0; c.pages = []; c.error = '';
-    refreshBadge(c);
-
-    const o = readOptions();
-    const conc = Math.max(1, Math.min(3, o.concurrency || 1));
-    let cursor = 0;
-    let prevTail = '';
-
-    const worker = async () => {
-      while (!stopFlag) {
-        const i = cursor++;
-        if (i >= c.images.length) return;
-        const img = c.images[i];
-        setStatus(`[${c.name}] ${i + 1}/${c.total} · ${img.name}`);
-        try {
-          const page = await processImage(img, o, conc === 1 ? prevTail : '');
-          c.pages[i] = page;
-          if (conc === 1 && page.translated) {
-            prevTail = splitLines(page.translated).slice(-4).join('\n');
-          }
-        } catch (e) {
-          const aborted = (e && e.name === 'AbortError') || /Đã dừng/.test(e.message || '');
-          // CHI thoat worker khi nguoi dung THAT SU bam Dung. Truoc day mot
-          // request bi abort/timeout cung lam worker return -> cac anh con lai
-          // dung im, chuong khong bao gio xong.
-          if (aborted && stopFlag) return;
-          c.pages[i] = {
-            name: img.name, source: '', translated: '',
-            error: aborted ? 'Quá thời gian chờ (timeout)' : (e.message || String(e))
-          };
-          c.error = c.pages[i].error;
-          console.error('[VB-BATCH] trang lỗi:', img.name, e);
-        }
-        c.done++;
-        bumpProgress();
-        refreshBadge(c);
-        if (o.delayMs) await sleep(o.delayMs);
-      }
-    };
-
-    await Promise.all(Array.from({ length: conc }, () => worker()));
-
-    c.status = stopFlag ? 'stopped' : (c.pages.some(p => p && p.error) ? 'error' : 'done');
-    if (c.status === 'done') c.error = '';
-    refreshBadge(c);
-    renderResults();
-  }
-
-  async function processImage(img, o, prevTail) {
-    const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), IMAGE_TIMEOUT_MS);
-    try {
-      const blob0 = await img.entry.async('blob');
-      const blob = blob0.type ? blob0 : new Blob([blob0], { type: mimeOf(img.name) });
-      const parts = await imageToParts(blob, {
-        maxWidth: o.maxWidth, sliceTall: o.sliceTall, sliceHeight: 3000
-      });
-
-      const bi = store().bilingual;
-      const ocrPrompt = buildOcrPrompt({
-        sourceLang: o.sourceLang, contentType: o.contentType,
-        skipSfx: o.skipSfx, sfxTag: bi.sfxTag
-      });
-
-      // ---- 1) OCR tung manh anh ----
-      const chunks = [];
-      for (const part of parts) {
-        chunks.push(await callGemini({
-          model: o.model,
-          parts: [{ text: ocrPrompt }, part],
-          generationConfig: { temperature: 0.1 },
-          signal: ac.signal,
-          shouldStop: () => stopFlag,
-          onStatus: setStatus
-        }));
-      }
-      const source = dedupJoin(chunks);
-      if (!source || source === '[NO TEXT]') {
-        return { name: img.name, source: '', translated: '', empty: true };
-      }
-
-      // ---- 2) Dich ----
-      const lines = splitLines(source);
-      const target = langName(o.targetLang);
-      const translated = await callGemini({
-        model: o.model,
-        parts: [{
-          text: buildTranslatePrompt({
-            sourceLang: o.sourceLang, targetLang: o.targetLang,
-            text: lines.join('\n'), lineCount: lines.length,
-            contextBlock: o.useContext ? contextBlock(target, 'translate') : '',
-            styleBlock: o.styleGuide ? styleBlock(target, 'translate') : '',
-            prevTail,
-            tagSfx: !o.skipSfx && !!bi.tagSfxInPrompt,
-            sfxTag: bi.sfxTag
-          })
-        }, parts[0]],
-        generationConfig: { temperature: 0.35, maxOutputTokens: 8192 },
-        signal: ac.signal,
-        shouldStop: () => stopFlag,
-        onStatus: setStatus
-      });
-
-      return {
-        name: img.name,
-        source: lines.join('\n'),
-        translated: splitLines(translated).join('\n')
-      };
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-
-  // ================== options ==================
-  const num = (id, def) => { const el = $(id); const v = el ? parseInt(el.value, 10) : NaN; return Number.isFinite(v) ? v : def; };
-  const val = (id, def) => { const el = $(id); return el && el.value ? el.value : def; };
-  const chk = (id, def) => { const el = $(id); return el ? !!el.checked : def; };
-
-  function readOptions() {
-    const d = store().batch;
-    return {
-      model: val('b-model', d.model),
-      contentType: val('b-type', d.contentType),
-      sourceLang: val('b-src', d.sourceLang),
-      targetLang: val('b-dst', d.targetLang),
-      concurrency: num('b-conc', d.concurrency),
-      delayMs: num('b-delay', d.delayMs),
-      maxWidth: num('b-width', d.maxWidth),
-      skipSfx: chk('b-skipsfx', d.skipSfx),
-      styleGuide: chk('b-style', d.styleGuide),
-      sliceTall: chk('b-slice', d.sliceTall),
-      bilingual: chk('b-bi', d.bilingual),
-      useContext: chk('b-ctx', d.useContext)
-    };
-  }
-
-  function saveOptions() {
-    Object.assign(store().batch, readOptions());
-    persist();
-  }
-
-  // Gan gia tri cho <select> AN TOAN: neu gia tri da luu khong co trong danh
-  // sach option (vd model gemini-3.1-flash-lite khong co trong studio.html),
-  // them option do vao thay vi de select rong -> goi API voi model rong.
-  function setSelect(id, value) {
-    const el = $(id);
-    if (!el || value == null || value === '') return;
-    const has = Array.from(el.options).some(o => o.value === String(value));
-    if (!has) {
-      const opt = document.createElement('option');
-      opt.value = String(value);
-      opt.textContent = String(value);
-      el.appendChild(opt);
-    }
-    el.value = String(value);
-  }
-  function setNum(id, value) { const el = $(id); if (el && Number.isFinite(+value)) el.value = value; }
-  function setChk(id, value) { const el = $(id); if (el && typeof value === 'boolean') el.checked = value; }
-
-  function fillOptions() {
-    const d = store();
-    const b = d.batch;
-    setSelect('b-model', b.model);
-    setSelect('b-type', b.contentType);
-    setSelect('b-src', b.sourceLang);
-    setSelect('b-dst', b.targetLang);
-    setSelect('b-conc', String(b.concurrency));
-    setNum('b-delay', b.delayMs);
-    setNum('b-width', b.maxWidth);
-    setChk('b-skipsfx', b.skipSfx);
-    setChk('b-style', b.styleGuide);
-    setChk('b-slice', b.sliceTall);
-    setChk('b-bi', typeof d.bilingual.enabled === 'boolean' ? d.bilingual.enabled : b.bilingual);
-    setChk('b-ctx', b.useContext);
-
-    const ctxInfo = $('b-ctxinfo');
-    if (ctxInfo) {
-      ctxInfo.textContent = hasContext()
-        ? `Ngữ cảnh: ${contextCharCount().toLocaleString()} ký tự`
-        : 'Chưa có ngữ cảnh (thiết lập ở trang chính → ⚙ Nâng cao).';
-    }
-    const keyInfo = $('b-keyinfo');
-    if (keyInfo) {
-      const keys = getKeys();
-      keyInfo.textContent = keys.length ? `${keys.length} API key sẵn sàng` : '⚠ Chưa có API key';
-    }
-  }
-
-  // ================== khoi tao + gan su kien (CHI MOT LAN) ==================
-  function init() {
-    if (!$('b-list')) return; // trang nay khong co panel batch -> bo qua
-
-    window.addEventListener('unhandledrejection', (ev) => {
-      console.error('[VB-BATCH] unhandled:', ev.reason);
-      if (running) setStatus('Lỗi ngầm: ' + ((ev.reason && ev.reason.message) || ev.reason));
+  /* ============================== 10. SỰ KIỆN ============================== */
+  function bind() {
+    $('b-zip').addEventListener('change', async (e) => {
+      for (const f of Array.from(e.target.files || [])) { try { await addZip(f); } catch (err) { setStatus('Lỗi đọc zip: ' + err.message); } }
+      e.target.value = '';
     });
 
-    fillOptions();
-    renderChapters();
-    renderResults();
-
-    on('b-back', 'click', () => { location.href = 'index.html'; });
-
-    // ---- nap zip: file picker (truoc day BI THIEU) ----
-    on('b-zip', 'change', (e) => {
-      const files = Array.from(e.target.files || []).filter(f => /\.zip$/i.test(f.name));
-      if (files.length) loadZips(files);
-      else if ((e.target.files || []).length) alert('Chỉ nhận file .zip');
-      e.target.value = ''; // cho phep chon lai dung file do
-    });
-
-    // ---- nap zip: keo & tha ----
     const drop = $('b-drop');
-    if (drop) {
-      ['dragenter', 'dragover'].forEach(ev =>
-        drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
-      ['dragleave', 'drop'].forEach(ev =>
-        drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
-      drop.addEventListener('drop', e => {
-        const files = Array.from((e.dataTransfer && e.dataTransfer.files) || []).filter(f => /\.zip$/i.test(f.name));
-        if (files.length) loadZips(files); else alert('Chỉ nhận file .zip');
-      });
-    }
-
-    // ---- chon chuong ----
-    on('b-all', 'click', () => { chapters.forEach(c => c.selected = true); renderChapters(); });
-    on('b-none', 'click', () => { chapters.forEach(c => c.selected = false); renderChapters(); });
-    on('b-invert', 'click', () => { chapters.forEach(c => c.selected = !c.selected); renderChapters(); });
-    on('b-filter', 'input', renderChapters);
-
-    // ---- chay / dung ----
-    on('b-start', 'click', () => { runAll(); });
-    on('b-stop', 'click', () => {
-      if (!running) return;
-      stopFlag = true;
-      setStatus('Đang dừng sau ảnh hiện tại…');
+    ['dragenter', 'dragover'].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add('is-over'); }));
+    ['dragleave', 'drop'].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.remove('is-over'); }));
+    drop.addEventListener('drop', async (e) => {
+      for (const f of Array.from(e.dataTransfer.files || [])) {
+        if (/\.zip$/i.test(f.name)) { try { await addZip(f); } catch (err) { setStatus('Lỗi đọc zip: ' + err.message); } }
+      }
     });
 
-    // ---- luu cau hinh khi doi ----
+    $('b-all').onclick = () => { S.chapters.forEach(c => c.sel = true); renderList(); };
+    $('b-none').onclick = () => { S.chapters.forEach(c => c.sel = false); renderList(); };
+    $('b-invert').onclick = () => { S.chapters.forEach(c => c.sel = !c.sel); renderList(); };
+    $('b-filter').addEventListener('input', renderList);
+    $('b-start').onclick = start;
+    $('b-stop').onclick = () => { if (S.abort) S.abort.abort(); setStatus('Đang dừng…'); };
+    $('b-zipall').onclick = zipAll;
+    $('b-copyall').onclick = () => {
+      const t = S.chapters.filter(c => c.result).map(c => c.result).join('\n\n');
+      if (!t) { alert('Chưa có kết quả.'); return; }
+      copy(t);
+    };
     ['b-model', 'b-type', 'b-src', 'b-dst', 'b-conc', 'b-delay', 'b-width',
       'b-skipsfx', 'b-style', 'b-slice', 'b-bi', 'b-ctx'].forEach(id => {
-      on(id, 'change', saveOptions);
-    });
+        const el = $(id); if (el) el.addEventListener('change', saveCfg);
+      });
+    $('b-ctx').addEventListener('change', refreshCtxInfo);
 
-    // ---- ket qua ----
-    on('b-zipall', 'click', zipAll);
-    on('b-copyall', 'click', copyAll);
-
-    window.addEventListener('beforeunload', (e) => {
-      if (running) { e.preventDefault(); e.returnValue = ''; }
-    });
-
-    if (!getKeys().length) setStatus('⚠ Chưa có API key — hãy nhập key ở trang chính trước khi dịch.');
+    window.addEventListener('vb:keys-changed', refreshKeyInfo);
+    window.addEventListener('vb:context-changed', refreshCtxInfo);
+    window.addEventListener('beforeunload', (e) => { if (S.running) { e.preventDefault(); e.returnValue = ''; } });
+    setInterval(() => { refreshKeyInfo(); refreshCtxInfo(); }, 2500);
   }
 
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
-  else init();
+  loadCfg();
+  bind();
+  renderList();
+  renderResults();
+  refreshKeyInfo();
+  refreshCtxInfo();
+
+  VB.batch = { state: S, start, stop: () => S.abort && S.abort.abort(), addZip, getContext, readKeys };
+})();
+/* =============================================================================
+ * vb-batch.js — VisionBox Studio · Tab "Dịch hàng loạt"
+ * Phụ thuộc: jszip.min.js (bắt buộc), vb-core.js (tuỳ chọn), style-guide.js (tuỳ chọn)
+ * Mọi thứ lấy từ VB đều có fallback nội bộ => chạy độc lập được.
+ * ========================================================================== */
+(function () {
+  'use strict';
+
+  if (!document.getElementById('b-list')) return; // không ở trang studio thì thôi
+
+  const VB = (window.VB = window.VB || {});
+  const $ = (id) => document.getElementById(id);
+  const CFG_KEY = 'visionbox_batch_cfg_v1';
+  const API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
+  const IMG_RE = /\.(jpe?g|png|webp|bmp|gif|avif|tiff?)$/i;
+  const coll = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+
+  /* ---------------------------------------------------------------- state */
+  const S = {
+    chapters: [],      // {id,name,pages:[{name,blob}],sel,status,result,err}
+    running: false,
+    abort: null,
+    done: 0,
+    total: 0,
+    zipNames: []
+  };
+
+  /* ============================== 1. API KEYS ============================== */
+  const cooldown = new Map();          // key -> timestamp hết phạt
+
+  function readKeys() {
+    // ưu tiên kho key của vb-core / vb-ui (tab ⚙ Nâng cao → API Keys)
+    const src = [
+      () => VB.keys && typeof VB.keys.list === 'function' && VB.keys.list(),
+      () => VB.keys && Array.isArray(VB.keys.all) && VB.keys.all,
+      () => typeof VB.getKeys === 'function' && VB.getKeys()
+    ];
+    for (const f of src) {
+      try { const k = f(); if (Array.isArray(k) && k.length) return k.filter(Boolean); } catch (_) {}
+    }
+    const LS = ['visionbox_api_keys', 'vb_api_keys', 'visionbox_keys'];
+    for (const name of LS) {
+      try {
+        const raw = localStorage.getItem(name);
+        if (!raw) continue;
+        const v = JSON.parse(raw);
+        if (Array.isArray(v)) { const k = v.map(x => (typeof x === 'string' ? x : x && x.key)).filter(Boolean); if (k.length) return k; }
+      } catch (_) {}
+    }
+    for (const name of ['visionbox_api_key', 'gemini_api_key', 'apiKey']) {
+      try { const s = localStorage.getItem(name); if (s && s.trim()) return [s.trim()]; } catch (_) {}
+    }
+    return [];
+  }
+
+  function pickKey() {
+    const keys = readKeys();
+    if (!keys.length) return null;
+    const now = Date.now();
+    const free = keys.filter(k => !cooldown.get(k) || cooldown.get(k) < now);
+    const pool = free.length ? free : keys;
+    const i = (pickKey._i = ((pickKey._i || 0) + 1)) % pool.length;
+    return pool[i];
+  }
+
+  function penalize(key, ms) {
+    cooldown.set(key, Date.now() + (ms || 45000));
+    try { VB.keys && typeof VB.keys.penalize === 'function' && VB.keys.penalize(key, ms); } catch (_) {}
+  }
+
+  function refreshKeyInfo() {
+    const n = readKeys().length;
+    const el = $('b-keyinfo');
+    if (el) el.textContent = n ? `· ${n} API key sẵn sàng` : '· chưa có API key — mở ⚙ Nâng cao → API Keys';
+  }
+
+  /* ============================== 2. NGỮ CẢNH ============================== */
+  function getContext() {
+    const src = [
+      () => VB.context && typeof VB.context.get === 'function' && VB.context.get(),
+      () => VB.context && typeof VB.context.current === 'string' && VB.context.current,
+      () => typeof VB.getContext === 'function' && VB.getContext()
+    ];
+    for (const f of src) {
+      try { const c = f(); if (c) return typeof c === 'string' ? c : (c.text || c.content || ''); } catch (_) {}
+    }
+    for (const name of ['visionbox_context_current', 'vb_context_current', 'visionbox_context']) {
+      try {
+        const raw = localStorage.getItem(name);
+        if (!raw) continue;
+        if (raw.trim().startsWith('{')) { const o = JSON.parse(raw); if (o && (o.text || o.content)) return o.text || o.content; }
+        else if (raw.trim()) return raw;
+      } catch (_) {}
+    }
+    return '';
+  }
+
+  function refreshCtxInfo() {
+    const c = getContext();
+    const el = $('b-ctxinfo');
+    if (!el) return;
+    el.textContent = c
+      ? `· ngữ cảnh hiện hành: ${c.length.toLocaleString('vi-VN')} ký tự`
+      : '· chưa có ngữ cảnh — sang tab “Tạo ngữ cảnh” hoặc bỏ tick ô này';
+  }
+
+  function styleGuideText() {
+    const g = window.STYLE_GUIDE || window.VB_STYLE_GUIDE || VB.styleGuide || window.styleGuide;
+    if (!g) return '';
+    if (typeof g === 'string') return g;
+    return g.text || g.prompt || g.content || '';
+  }
+
+  /* ============================== 3. PROMPT ================================ */
+  const LANG = { ja: 'tiếng Nhật', ko: 'tiếng Hàn', zh: 'tiếng Trung', en: 'tiếng Anh', vi: 'tiếng Việt' };
+
+  function localPrompt(o) {
+    const src = LANG[o.src] || o.src, dst = LANG[o.dst] || o.dst;
+    const order = o.type === 'webtoon'
+      ? 'Webtoon cuộn dọc: đọc TỪ TRÊN XUỐNG DƯỚI. Khi hai bóng thoại nằm ngang hàng nhau thì đọc trái → phải.'
+      : 'Manga khung Nhật: đọc TỪ PHẢI SANG TRÁI, TỪ TRÊN XUỐNG DƯỚI. Trong một khung, bóng thoại bên phải luôn đọc trước bóng bên trái; bóng cao hơn đọc trước bóng thấp hơn.';
+
+    const p = [];
+    p.push(`Bạn là dịch giả truyện tranh chuyên nghiệp, dịch ${src} → ${dst}. Bạn ĐANG NHÌN THẤY trang truyện đính kèm, hãy dùng hình ảnh để hiểu bối cảnh chứ không chỉ đọc chữ.`);
+    p.push('');
+    p.push('QUY TẮC THỨ TỰ');
+    p.push('1. ' + order);
+    p.push('2. Bóng thoại phụ (đuôi nối tiếp cùng một người nói) gộp chung vào một mục, ngăn bằng dấu " — ".');
+    p.push('3. Không bỏ sót bất kỳ chữ nào có trong trang: thoại, nội tâm, narration, chữ ngoài bóng, biển hiệu, tin nhắn điện thoại.');
+    p.push('');
+    p.push('QUY TẮC XƯNG HÔ (bắt buộc nhìn ảnh mới quyết định)');
+    p.push('- Quan sát tuổi tác, trang phục, đồng phục, chức vụ, biểu cảm, khoảng cách cơ thể và vị thế của nhân vật trong khung để chọn cặp xưng hô tiếng Việt cho đúng.');
+    p.push('- Giữ nhất quán cặp xưng hô giữa cùng hai nhân vật trong suốt trang; nếu quan hệ thay đổi (cãi nhau, thân mật hơn) mới được đổi và phải hợp lý.');
+    p.push('- Hậu tố kính ngữ (-san, -kun, -senpai, 님…) không dịch máy móc mà chuyển thành xưng hô Việt tương đương.');
+    p.push('- Nếu ảnh không đủ dữ kiện, chọn cặp trung tính và ghi chú ở cuối bằng dòng "[GHI CHÚ] ...".');
+    p.push('');
+    p.push('QUY TẮC VĂN PHONG');
+    p.push('- Dịch thoát, giữ đúng sắc thái và nhịp truyện tranh; câu ngắn, tự nhiên như người Việt nói.');
+    p.push('- Giữ nguyên tên riêng, tên chiêu thức theo bảng thuật ngữ nếu có trong phần NGỮ CẢNH.');
+    p.push(o.skipSfx ? '- BỎ QUA hoàn toàn hiệu ứng âm thanh (SFX).' : '- Dịch cả SFX, đánh dấu [SFX].');
+    if (o.style) { const sg = styleGuideText(); if (sg) { p.push(''); p.push('ELEMENTS OF STYLE'); p.push(sg.slice(0, 4000)); } }
+    if (o.context) { p.push(''); p.push('===== NGỮ CẢNH TÁC PHẨM (ưu tiên tuyệt đối) ====='); p.push(o.context.slice(0, 20000)); p.push('===== HẾT NGỮ CẢNH ====='); }
+    if (o.sliced) { p.push(''); p.push(`LƯU Ý: trang này được cắt thành ${o.sliceCount} mảnh theo chiều dọc, bạn đang xem lần lượt các mảnh của CÙNG một trang. Hãy đọc liền mạch, không lặp lại phần chồng lấn giữa hai mảnh.`); }
+    p.push('');
+    p.push('ĐỊNH DẠNG ĐẦU RA — chỉ xuất danh sách, không thêm lời dẫn, không markdown:');
+    if (o.bilingual) {
+      p.push('1. [LOẠI][Tên nhân vật hoặc "?"]');
+      p.push('   > nguyên văn');
+      p.push('   bản dịch');
+    } else {
+      p.push('1. [LOẠI][Tên nhân vật hoặc "?"] bản dịch');
+    }
+    p.push('LOẠI ∈ {THOẠI, NỘI TÂM, NARRATION, CHỮ NỀN' + (o.skipSfx ? '' : ', SFX') + '}.');
+    p.push('Nếu trang không có chữ nào, xuất đúng một dòng: [TRANG TRỐNG]');
+    return p.join('\n');
+  }
+
+  function buildPrompt(o) {
+    const cands = [
+      VB.buildTranslatePrompt, VB.buildTranslationPrompt,
+      VB.prompts && VB.prompts.translate, VB.prompt && VB.prompt.translate
+    ];
+    for (const f of cands) {
+      if (typeof f === 'function') {
+        try { const s = f(o); if (s && typeof s === 'string' && s.length > 80) return s; } catch (_) {}
+      }
+    }
+    return localPrompt(o);
+  }
+
+  /* ============================== 4. ẢNH =================================== */
+  async function loadBitmap(blob) {
+    if (window.createImageBitmap) { try { return await createImageBitmap(blob); } catch (_) {} }
+    return await new Promise((res, rej) => {
+      const url = URL.createObjectURL(blob), im = new Image();
+      im.onload = () => { URL.revokeObjectURL(url); res(im); };
+      im.onerror = () => { URL.revokeObjectURL(url); rej(new Error('không giải mã được ảnh')); };
+      im.src = url;
+    });
+  }
+
+  function canvasToB64(cv) {
+    const url = cv.toDataURL('image/jpeg', 0.86);
+    return url.slice(url.indexOf(',') + 1);
+  }
+
+  // trả về mảng base64 (1 phần tử nếu không cắt)
+  async function imageToParts(blob, maxW, allowSlice) {
+    const bmp = await loadBitmap(blob);
+    const ow = bmp.width || bmp.naturalWidth, oh = bmp.height || bmp.naturalHeight;
+    const scale = ow > maxW ? maxW / ow : 1;
+    const w = Math.max(1, Math.round(ow * scale)), h = Math.max(1, Math.round(oh * scale));
+
+    const needSlice = allowSlice && h > w * 2.6;
+    if (!needSlice) {
+      const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+      cv.getContext('2d').drawImage(bmp, 0, 0, w, h);
+      if (bmp.close) bmp.close();
+      return [canvasToB64(cv)];
+    }
+    const sliceH = Math.round(w * 1.7), ov = Math.round(sliceH * 0.08);
+    const out = [];
+    for (let y = 0; y < h; y += sliceH - ov) {
+      const hh = Math.min(sliceH, h - y);
+      if (hh < 40 && out.length) break;
+      const cv = document.createElement('canvas'); cv.width = w; cv.height = hh;
+      cv.getContext('2d').drawImage(bmp, 0, y / scale, ow, hh / scale, 0, 0, w, hh);
+      out.push(canvasToB64(cv));
+      if (y + hh >= h) break;
+    }
+    if (bmp.close) bmp.close();
+    return out;
+  }
+
+  /* ============================== 5. GỌI API =============================== */
+  async function callModel(model, parts, signal) {
+    const keys = readKeys();
+    if (!keys.length) throw new Error('Chưa cấu hình API key.');
+    let lastErr = null;
+    const tries = Math.min(6, Math.max(3, keys.length + 1));
+
+    for (let t = 0; t < tries; t++) {
+      if (signal && signal.aborted) throw new Error('Đã dừng');
+      const key = pickKey();
+      if (!key) throw new Error('Không còn API key khả dụng.');
+      try {
+        const res = await fetch(`${API_BASE}/${encodeURIComponent(model)}:generateContent`, {
+          method: 'POST',
+          signal,
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+          body: JSON.stringify({
+            contents: [{ role: 'user', parts }],
+            generationConfig: { temperature: 0.35, topP: 0.95, maxOutputTokens: 8192 },
+            safetySettings: ['HARM_CATEGORY_HARASSMENT', 'HARM_CATEGORY_HATE_SPEECH',
+              'HARM_CATEGORY_SEXUALLY_EXPLICIT', 'HARM_CATEGORY_DANGEROUS_CONTENT']
+              .map(c => ({ category: c, threshold: 'BLOCK_NONE' }))
+          })
+        });
+
+        if (res.status === 429 || res.status === 503) {
+          penalize(key, res.status === 429 ? 60000 : 20000);
+          lastErr = new Error(`HTTP ${res.status} (quota/quá tải) — đổi key`);
+          await sleep(800 + t * 600);
+          continue;
+        }
+        if (res.status === 400 || res.status === 403) {
+          penalize(key, 10 * 60000);
+          lastErr = new Error(`HTTP ${res.status} — key không hợp lệ hoặc bị từ chối`);
+          continue;
+        }
+        if (!res.ok) { lastErr = new Error('HTTP ' + res.status); await sleep(600); continue; }
+
+        const data = await res.json();
+        const cand = data && data.candidates && data.candidates[0];
+        const txt = cand && cand.content && Array.isArray(cand.content.parts)
+          ? cand.content.parts.map(p => p.text || '').join('').trim() : '';
+        if (!txt) {
+          const why = (data && data.promptFeedback && data.promptFeedback.blockReason) || (cand && cand.finishReason) || 'rỗng';
+          throw new Error('Model không trả nội dung (' + why + ')');
+        }
+        return txt;
+      } catch (e) {
+        if (e.name === 'AbortError') throw new Error('Đã dừng');
+        lastErr = e;
+        await sleep(500 + t * 400);
+      }
+    }
+    throw lastErr || new Error('Gọi API thất bại');
+  }
+
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+  /* ============================== 6. NẠP ZIP =============================== */
+  function chapterOf(path) {
+    const parts = path.split('/').filter(Boolean);
+    return parts.length <= 1 ? '(gốc)' : parts.slice(0, -1).join(' / ');
+  }
+
+  async function addZip(file) {
+    if (typeof JSZip === 'undefined') { alert('Thiếu jszip.min.js'); return; }
+    setStatus(`Đang đọc ${file.name}…`);
+    const zip = await JSZip.loadAsync(file);
+    const map = new Map();
+    const entries = Object.keys(zip.files).sort(coll.compare);
+
+    for (const path of entries) {
+      const ent = zip.files[path];
+      if (ent.dir) continue;
+      const base = path.split('/').pop();
+      if (!base || base.startsWith('.') || path.includes('__MACOSX')) continue;
+      if (!IMG_RE.test(base)) continue;
+      const ch = chapterOf(path);
+      if (!map.has(ch)) map.set(ch, []);
+      map.get(ch).push({ name: base, entry: ent });
+    }
+    if (!map.size) { setStatus(`${file.name}: không tìm thấy ảnh nào.`); return; }
+
+    S.zipNames.push(file.name);
+    const multi = S.zipNames.length > 1;
+    const zipLabel = file.name.replace(/\.zip$/i, '');
+
+    for (const [ch, list] of map) {
+      list.sort((a, b) => coll.compare(a.name, b.name));
+      const pages = [];
+      for (const it of list) pages.push({ name: it.name, blob: await it.entry.async('blob') });
+      S.chapters.push({
+        id: 'c' + Math.random().toString(36).slice(2, 9),
+        name: multi ? `${zipLabel} / ${ch}` : ch,
+        pages, sel: true, status: 'idle', result: '', err: ''
+      });
+    }
+    S.chapters.sort((a, b) => coll.compare(a.name, b.name));
+    renderList();
+    const totalPages = S.chapters.reduce((s, c) => s + c.pages.length, 0);
+    $('b-zipinfo').textContent = `Đã nạp ${S.zipNames.length} file zip · ${S.chapters.length} chương · ${totalPages} trang.`;
+    setStatus('Sẵn sàng dịch.');
+  }
+
+  /* ============================== 7. UI LIST =============================== */
+  function renderList() {
+    const box = $('b-list');
+    const kw = ($('b-filter').value || '').trim().toLowerCase();
+    box.innerHTML = '';
+    if (!S.chapters.length) { box.innerHTML = '<p class="vb-hint">Chưa nạp chương nào.</p>'; return; }
+
+    S.chapters.forEach(c => {
+      if (kw && !c.name.toLowerCase().includes(kw)) return;
+      const row = document.createElement('label');
+      row.className = 'vb-chapter' + (c.status === 'run' ? ' is-run' : c.status === 'done' ? ' is-done' : c.status === 'err' ? ' is-err' : '');
+      const cb = document.createElement('input');
+      cb.type = 'checkbox'; cb.checked = c.sel;
+      cb.addEventListener('change', () => { c.sel = cb.checked; updateCounts(); });
+      const nm = document.createElement('span'); nm.className = 'vb-chapter-name'; nm.textContent = c.name;
+      const meta = document.createElement('span'); meta.className = 'vb-hint';
+      meta.textContent = `${c.pages.length} trang` +
+        (c.status === 'done' ? ' · ✔ xong' : c.status === 'err' ? ' · ✘ ' + c.err : c.status === 'run' ? ' · đang dịch…' : '');
+      row.append(cb, nm, meta);
+      box.appendChild(row);
+    });
+    updateCounts();
+  }
+
+  function updateCounts() {
+    const sel = S.chapters.filter(c => c.sel);
+    const pages = sel.reduce((s, c) => s + c.pages.length, 0);
+    if (!S.running) setStatus(sel.length ? `Đã chọn ${sel.length} chương · ${pages} trang.` : 'Chưa chọn chương nào.');
+  }
+
+  function setStatus(t) { const el = $('b-status'); if (el) el.textContent = t; }
+  function setProgress(p) { const el = $('b-progress'); if (el) el.style.width = Math.max(0, Math.min(100, p)) + '%'; }
+
+  function renderResults() {
+    const box = $('b-results');
+    box.innerHTML = '';
+    const done = S.chapters.filter(c => c.result);
+    if (!done.length) { box.innerHTML = '<p class="vb-hint">Chưa có kết quả.</p>'; return; }
+    done.forEach(c => {
+      const card = document.createElement('div');
+      card.className = 'vb-result';
+      const head = document.createElement('div');
+      head.className = 'vb-row';
+      const h = document.createElement('b'); h.textContent = c.name;
+      const sp = document.createElement('span'); sp.className = 'vb-spacer';
+      const mk = (label, fn) => { const b = document.createElement('button'); b.className = 'vb-btn'; b.textContent = label; b.onclick = fn; return b; };
+      head.append(h, sp,
+        mk('Copy', () => copy(ta.value)),
+        mk('⬇ .txt', () => saveFile(ta.value, 'txt', safeName(c.name))),
+        mk('⬇ .docx', () => saveFile(ta.value, 'docx', safeName(c.name))));
+      const ta = document.createElement('textarea');
+      ta.rows = 12; ta.value = c.result;
+      ta.addEventListener('input', () => { c.result = ta.value; });
+      card.append(head, ta);
+      box.appendChild(card);
+    });
+  }
+
+  /* ============================== 8. DỊCH ================================== */
+  function readCfg() {
+    return {
+      model: $('b-model').value,
+      type: $('b-type').value,
+      src: $('b-src').value,
+      dst: $('b-dst').value,
+      conc: Math.max(1, parseInt($('b-conc').value, 10) || 1),
+      delay: Math.max(0, parseInt($('b-delay').value, 10) || 0),
+      width: Math.max(600, parseInt($('b-width').value, 10) || 1400),
+      skipSfx: $('b-skipsfx').checked,
+      style: $('b-style').checked,
+      slice: $('b-slice').checked,
+      bilingual: $('b-bi').checked,
+      useCtx: $('b-ctx').checked
+    };
+  }
+
+  function saveCfg() { try { localStorage.setItem(CFG_KEY, JSON.stringify(readCfg())); } catch (_) {} }
+
+  function loadCfg() {
+    try {
+      const c = JSON.parse(localStorage.getItem(CFG_KEY) || '{}');
+      const set = (id, v) => { const el = $(id); if (el && v !== undefined && v !== null) { if (el.type === 'checkbox') el.checked = !!v; else el.value = v; } };
+      set('b-model', c.model); set('b-type', c.type); set('b-src', c.src); set('b-dst', c.dst);
+      set('b-conc', c.conc); set('b-delay', c.delay); set('b-width', c.width);
+      set('b-skipsfx', c.skipSfx); set('b-style', c.style); set('b-slice', c.slice);
+      set('b-bi', c.bilingual); set('b-ctx', c.useCtx);
+    } catch (_) {}
+  }
+
+  async function translatePage(page, idx, cfg, ctx, signal) {
+    const imgs = await imageToParts(page.blob, cfg.width, cfg.slice);
+    const prompt = buildPrompt({
+      src: cfg.src, dst: cfg.dst, type: cfg.type, skipSfx: cfg.skipSfx,
+      style: cfg.style, bilingual: cfg.bilingual, context: ctx,
+      sliced: imgs.length > 1, sliceCount: imgs.length,
+      pageName: page.name, pageIndex: idx + 1
+    });
+    const parts = [{ text: prompt }];
+    imgs.forEach(b64 => parts.push({ inline_data: { mime_type: 'image/jpeg', data: b64 } }));
+    return await callModel(cfg.model, parts, signal);
+  }
+
+  async function runChapter(ch, cfg, ctx, signal) {
+    const out = new Array(ch.pages.length).fill('');
+    let cursor = 0;
+
+    async function worker() {
+      while (true) {
+        if (signal.aborted) return;
+        const i = cursor++;
+        if (i >= ch.pages.length) return;
+        const page = ch.pages[i];
+        try {
+          out[i] = await translatePage(page, i, cfg, ctx, signal);
+        } catch (e) {
+          if (String(e.message).includes('dừng')) return;
+          out[i] = `[LỖI] ${e.message}`;
+        }
+        S.done++;
+        setProgress(S.total ? (S.done / S.total) * 100 : 0);
+        setStatus(`${ch.name} · trang ${Math.min(S.done, S.total)}/${S.total}`);
+        if (cfg.delay) await sleep(cfg.delay);
+      }
+    }
+
+    const n = Math.min(cfg.conc, ch.pages.length);
+    await Promise.all(Array.from({ length: n }, worker));
+
+    const head = `===== ${ch.name} =====\n`;
+    const body = ch.pages.map((p, i) =>
+      `\n--- Trang ${String(i + 1).padStart(3, '0')} · ${p.name} ---\n${out[i] || '[TRỐNG]'}`).join('\n');
+    return head + body + '\n';
+  }
+
+  async function start() {
+    if (S.running) return;
+    const sel = S.chapters.filter(c => c.sel);
+    if (!sel.length) { alert('Chưa chọn chương nào.'); return; }
+    if (!readKeys().length) { alert('Chưa có API key. Mở ⚙ Nâng cao → API Keys để thêm (mỗi dòng một key hoặc import file .txt).'); return; }
+
+    const cfg = readCfg();
+    saveCfg();
+    const ctx = cfg.useCtx ? getContext() : '';
+
+    S.running = true; S.abort = new AbortController();
+    S.done = 0; S.total = sel.reduce((s, c) => s + c.pages.length, 0);
+    $('b-start').disabled = true; $('b-stop').disabled = false;
+    setProgress(0);
+
+    for (const ch of sel) {
+      if (S.abort.signal.aborted) break;
+      ch.status = 'run'; ch.err = ''; renderList();
+      try {
+        ch.result = await runChapter(ch, cfg, ctx, S.abort.signal);
+        ch.status = S.abort.signal.aborted ? 'idle' : 'done';
+      } catch (e) {
+        ch.status = 'err'; ch.err = e.message;
+      }
+      renderList(); renderResults();
+    }
+
+    S.running = false;
+    $('b-start').disabled = false; $('b-stop').disabled = true;
+    setStatus(S.abort.signal.aborted ? 'Đã dừng theo yêu cầu.' : `Hoàn tất ${sel.length} chương · ${S.total} trang.`);
+    setProgress(100);
+  }
+
+  /* ============================== 9. XUẤT FILE ============================= */
+  const safeName = (s) => String(s).replace(/[\\/:*?"<>|]+/g, '_').replace(/\s+/g, ' ').trim().slice(0, 120) || 'chuong';
+
+  function download(blob, filename) {
+    const url = URL.createObjectURL(blob), a = document.createElement('a');
+    a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  const XMLH = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
+  const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+
+  async function docxBlob(text) {
+    if (typeof JSZip === 'undefined') throw new Error('Thiếu JSZip');
+    const paras = String(text).split(/\r\n|\r|\n/).map(l =>
+      l.trim() === '' ? '<w:p/>' : `<w:p><w:r><w:t xml:space="preserve">${esc(l)}</w:t></w:r></w:p>`).join('');
+    const zip = new JSZip();
+    zip.file('[Content_Types].xml', XMLH +
+      '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+      '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+      '<Default Extension="xml" ContentType="application/xml"/>' +
+      '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>' +
+      '</Types>');
+    zip.folder('_rels').file('.rels', XMLH +
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+      '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>' +
+      '</Relationships>');
+    zip.folder('word').file('document.xml', XMLH +
+      '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>' + paras +
+      '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1417" w:right="1417" w:bottom="1417" w:left="1417"/></w:sectPr>' +
+      '</w:body></w:document>');
+    return zip.generateAsync({ type: 'blob', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+  }
+
+  async function saveFile(text, format, name) {
+    try {
+      if (window.fileExport && typeof window.fileExport.save === 'function') {
+        const ok = await window.fileExport.save(text, format, name);
+        if (ok) return;
+      }
+      if (format === 'docx') { download(await docxBlob(text), name + '.docx'); return; }
+      download(new Blob([text], { type: 'text/plain;charset=utf-8' }), name + '.' + (format || 'txt'));
+    } catch (e) { alert('Không lưu được file: ' + e.message); }
+  }
+
+  async function copy(text) {
+    try { await navigator.clipboard.writeText(text); flash('Đã copy.'); }
+    catch (_) {
+      const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta);
+      ta.select(); document.execCommand('copy'); ta.remove(); flash('Đã copy.');
+    }
+  }
+
+  function flash(msg) { const old = $('b-status').textContent; setStatus(msg); setTimeout(() => setStatus(old), 1500); }
+
+  async function zipAll() {
+    const done = S.chapters.filter(c => c.result);
+    if (!done.length) { alert('Chưa có kết quả nào để tải.'); return; }
+    const zip = new JSZip();
+    const used = new Set();
+    done.forEach(c => {
+      let n = safeName(c.name), i = 2;
+      while (used.has(n)) n = safeName(c.name) + ' (' + i++ + ')';
+      used.add(n);
+      zip.file(n + '.txt', c.result);
+    });
+    setStatus('Đang nén…');
+    download(await zip.generateAsync({ type: 'blob' }), 'visionbox-ban-dich.zip');
+    setStatus(`Đã tải ${done.length} chương.`);
+  }
+
+  /* ============================== 10. SỰ KIỆN ============================== */
+  function bind() {
+    $('b-zip').addEventListener('change', async (e) => {
+      for (const f of Array.from(e.target.files || [])) { try { await addZip(f); } catch (err) { setStatus('Lỗi đọc zip: ' + err.message); } }
+      e.target.value = '';
+    });
+
+    const drop = $('b-drop');
+    ['dragenter', 'dragover'].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add('is-over'); }));
+    ['dragleave', 'drop'].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.remove('is-over'); }));
+    drop.addEventListener('drop', async (e) => {
+      for (const f of Array.from(e.dataTransfer.files || [])) {
+        if (/\.zip$/i.test(f.name)) { try { await addZip(f); } catch (err) { setStatus('Lỗi đọc zip: ' + err.message); } }
+      }
+    });
+
+    $('b-all').onclick = () => { S.chapters.forEach(c => c.sel = true); renderList(); };
+    $('b-none').onclick = () => { S.chapters.forEach(c => c.sel = false); renderList(); };
+    $('b-invert').onclick = () => { S.chapters.forEach(c => c.sel = !c.sel); renderList(); };
+    $('b-filter').addEventListener('input', renderList);
+    $('b-start').onclick = start;
+    $('b-stop').onclick = () => { if (S.abort) S.abort.abort(); setStatus('Đang dừng…'); };
+    $('b-zipall').onclick = zipAll;
+    $('b-copyall').onclick = () => {
+      const t = S.chapters.filter(c => c.result).map(c => c.result).join('\n\n');
+      if (!t) { alert('Chưa có kết quả.'); return; }
+      copy(t);
+    };
+    ['b-model', 'b-type', 'b-src', 'b-dst', 'b-conc', 'b-delay', 'b-width',
+      'b-skipsfx', 'b-style', 'b-slice', 'b-bi', 'b-ctx'].forEach(id => {
+        const el = $(id); if (el) el.addEventListener('change', saveCfg);
+      });
+    $('b-ctx').addEventListener('change', refreshCtxInfo);
+
+    window.addEventListener('vb:keys-changed', refreshKeyInfo);
+    window.addEventListener('vb:context-changed', refreshCtxInfo);
+    window.addEventListener('beforeunload', (e) => { if (S.running) { e.preventDefault(); e.returnValue = ''; } });
+    setInterval(() => { refreshKeyInfo(); refreshCtxInfo(); }, 2500);
+  }
+
+  loadCfg();
+  bind();
+  renderList();
+  renderResults();
+  refreshKeyInfo();
+  refreshCtxInfo();
+
+  VB.batch = { state: S, start, stop: () => S.abort && S.abort.abort(), addZip, getContext, readKeys };
 })();
