@@ -13,105 +13,135 @@
 <header class="topbar">
   <div class="brand"><div class="brand-text">
     <h1>VisionBox · Studio</h1>
-    <span class="brand-sub">Tạo context → dịch cả bộ → gộp bản dịch, trong cùng một chỗ</span>
+    <span class="brand-sub">Tạo ngữ cảnh · Dịch cả bộ · Gộp bản dịch</span>
   </div></div>
-  <div class="topbar-controls"><!-- vb-ui.js tự chèn nút ⚙ Nâng cao + ← Trang chính --></div>
+  <div class="topbar-controls"><!-- vb-ui.js tự chèn ⚙ Nâng cao + ← Trang chính --></div>
 </header>
 
 <nav class="vb-studio-nav">
-  <button type="button" class="vb-studio-tab" data-tab="context">📚 Tạo context</button>
+  <button type="button" class="vb-studio-tab" data-tab="context">📚 Tạo ngữ cảnh</button>
   <button type="button" class="vb-studio-tab" data-tab="batch">📦 Dịch hàng loạt</button>
   <button type="button" class="vb-studio-tab" data-tab="merge">🔀 Gộp bản dịch</button>
 </nav>
 
-<!-- ============ TAB 1: TẠO CONTEXT ============ -->
+<!-- ============ TAB 1: TẠO NGỮ CẢNH (theo pipeline trans.py) ============ -->
 <main class="vb-batch vb-studio-panel" data-panel="context">
+
   <section class="vb-card">
-    <h2>1. Nạp trang truyện <span class="vb-hint" id="x-keyinfo"></span></h2>
-    <div class="vb-drop" id="x-drop">
-      <p>Kéo &amp; thả <b>.zip</b> (mỗi folder = 1 chương) hoặc <b>ảnh rời</b> vào đây, hoặc</p>
-      <label class="vb-btn vb-btn-primary" for="x-file">Chọn file</label>
-      <input type="file" id="x-file" accept=".zip,application/zip,image/*" multiple hidden>
-      <p class="vb-hint">Không cần nạp cả bộ — vài chương đầu là đủ để dựng hồ sơ nhân vật và bảng xưng hô.</p>
+    <h2>1. Nguồn ảnh <span class="vb-hint" id="c-keyinfo"></span></h2>
+    <div class="vb-drop" id="c-drop">
+      <p>Kéo &amp; thả <b>.zip</b> hoặc <b>ảnh</b> vào đây, hoặc</p>
+      <label class="vb-btn vb-btn-primary" for="c-zip">Chọn file .zip</label>
+      <input type="file" id="c-zip" accept=".zip,application/zip" multiple hidden>
+      <label class="vb-btn" for="c-imgs">Chọn ảnh rời</label>
+      <input type="file" id="c-imgs" accept="image/*" multiple hidden>
+      <p class="vb-hint">Mỗi folder trong zip = 1 chương. Tool chỉ lấy mẫu vài trang mỗi lô nên không tốn nhiều quota.</p>
     </div>
-    <div id="x-srcinfo" class="vb-hint"></div>
+    <div id="c-srcinfo" class="vb-hint">Chưa nạp ảnh nào.</div>
+    <div id="c-chaplist" class="vb-chapters"></div>
   </section>
 
   <section class="vb-card">
-    <h2>2. Thông tin truyện</h2>
+    <h2>2. Thông tin tác phẩm</h2>
+    <div class="vb-grid2">
+      <div class="vb-field"><label>Tên truyện (dùng đặt tên file ngữ cảnh)</label>
+        <input type="text" id="c-series" placeholder="VD: One Piece"></div>
+      <div class="vb-field"><label>Khoảng chương (để trống = tự suy từ tên folder)</label>
+        <input type="text" id="c-range" placeholder="VD: 1-4"></div>
+    </div>
+
+    <div class="vb-field">
+      <label>Thể loại (chọn nhiều — quyết định định hướng văn phong)</label>
+      <div id="c-genres" class="vb-genres"></div>
+    </div>
+    <div class="vb-row">
+      <label class="vb-inline"><input type="checkbox" id="c-genre-auto" checked> Để AI tự nhận diện thêm thể loại từ ảnh</label>
+      <span class="vb-hint" id="c-genre-note"></span>
+    </div>
+    <div class="vb-field"><label>Ghi chú thể loại / văn phong riêng</label>
+      <input type="text" id="c-genre-extra" placeholder="VD: giọng hài nhẹ, xưng hô tớ–cậu"></div>
+    <div class="vb-field"><label>Yêu cầu riêng cho AI khi dựng ngữ cảnh</label>
+      <textarea id="c-notes" rows="3" placeholder="VD: giữ nguyên tên chiêu thức, nhân vật A luôn nói trống không…"></textarea></div>
+  </section>
+
+  <section class="vb-card">
+    <h2>3. Cấu hình phân tích</h2>
     <div class="vb-grid3">
-      <div class="vb-field"><label>Tên truyện <b>(bắt buộc — thư viện lưu theo tên này)</b></label><input type="text" id="x-series" placeholder="VD: One Piece"></div>
-      <div class="vb-field"><label>Khoảng chương đang quét</label><input type="text" id="x-range" placeholder="VD: 1-4"></div>
       <div class="vb-field"><label>Model</label>
-        <select id="x-model">
+        <select id="c-model">
           <option value="gemini-2.5-flash" selected>gemini-2.5-flash</option>
-          <option value="gemini-2.5-pro">gemini-2.5-pro (kỹ nhất)</option>
+          <option value="gemini-2.5-pro">gemini-2.5-pro</option>
           <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite</option>
-          <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite</option>
         </select>
       </div>
-      <div class="vb-field"><label>Số trang mỗi lượt phân tích</label><input type="number" id="x-batch" min="1" max="16" step="1" value="8"></div>
-      <div class="vb-field"><label>Thu nhỏ ảnh về tối đa (px)</label><input type="number" id="x-maxside" min="640" step="64" value="1280"></div>
-      <div class="vb-field"><label>Nghỉ giữa 2 lượt (ms)</label><input type="number" id="x-delay" min="0" step="100" value="800"></div>
+      <div class="vb-field"><label>Ngôn ngữ gốc</label>
+        <select id="c-src">
+          <option value="ja">Japanese (日本語)</option>
+          <option value="ko">Korean (한국어)</option>
+          <option value="zh">Chinese (中文)</option>
+          <option value="en">English</option>
+        </select>
+      </div>
+      <div class="vb-field"><label>Ngôn ngữ ngữ cảnh</label>
+        <select id="c-dst"><option value="vi" selected>Tiếng Việt</option><option value="en">English</option></select>
+      </div>
+      <div class="vb-field"><label>Số trang mỗi lô phân tích</label>
+        <input type="number" id="c-batchsize" min="2" max="12" step="1" value="8"></div>
+      <div class="vb-field"><label>Tối đa số lô (0 = không giới hạn)</label>
+        <input type="number" id="c-maxbatch" min="0" step="1" value="0"></div>
+      <div class="vb-field"><label>Nghỉ giữa 2 lô (ms)</label>
+        <input type="number" id="c-delay" min="0" step="100" value="700"></div>
+      <div class="vb-field"><label>Thu nhỏ ảnh về tối đa (px)</label>
+        <input type="number" id="c-width" min="600" step="100" value="1280"></div>
     </div>
-    <div class="vb-field"><label>Yêu cầu riêng cho AI (tùy chọn)</label><textarea id="x-notes" rows="3" placeholder="VD: nhân vật A luôn nói trống không; không dịch tên chiêu thức; xưng hô cặp chính là tôi – cậu…"></textarea></div>
-  </section>
-
-  <section class="vb-card">
-    <h2>3. Thể loại &amp; định hướng văn phong</h2>
     <div class="vb-row">
-      <label class="vb-inline"><input type="checkbox" id="x-gauto" checked> Tự nhận diện thể loại từ ảnh</label>
-      <span class="vb-spacer"></span>
-      <button class="vb-btn" id="x-gall">Chọn tất cả</button>
-      <button class="vb-btn" id="x-gnone">Bỏ chọn</button>
-    </div>
-    <div id="x-genres" class="vb-genres"></div>
-    <div class="vb-field"><label>Ghi chú thể loại thêm</label><input type="text" id="x-gextra" placeholder="VD: hài đen, nhịp chậm, nhiều nội tâm"></div>
-  </section>
-
-  <section class="vb-card">
-    <h2>4. Cộng dồn context cũ</h2>
-    <div class="vb-row">
-      <label class="vb-inline"><input type="checkbox" id="x-accum" checked> Cộng dồn (chỉ thêm, không xoá dữ liệu cũ)</label>
-      <label class="vb-inline"><input type="checkbox" id="x-autobase" checked> Tự chọn bản mới nhất của truyện làm nền</label>
-      <label class="vb-inline"><input type="checkbox" id="x-union" checked> Gộp khoảng chương vào tên file (1-4 + 5-9 → 1-9)</label>
-      <label class="vb-inline"><input type="checkbox" id="x-web" checked> Tra web bổ sung</label>
-      <label class="vb-inline"><input type="checkbox" id="x-apply" checked> Xong thì dùng luôn cho việc dịch</label>
+      <label class="vb-inline"><input type="checkbox" id="c-accum" checked> Cộng dồn: chỉ thêm, không xoá dữ liệu ngữ cảnh cũ</label>
+      <label class="vb-inline"><input type="checkbox" id="c-autobase" checked> Tự nạp bản ngữ cảnh mới nhất của truyện làm nền</label>
     </div>
     <div class="vb-field">
-      <label>Context làm nền</label>
+      <label>Bản ngữ cảnh nền (tuỳ chọn — nạp file .txt/.md/.docx của các chương trước)</label>
       <div class="vb-row">
-        <select id="x-base"></select>
-        <button class="vb-btn" id="x-refresh" title="Nạp lại thư viện">⟳</button>
+        <label class="vb-btn" for="c-basefile">Chọn file nền</label>
+        <input type="file" id="c-basefile" accept=".txt,.md,.json,.csv,.docx" hidden>
+        <select id="c-lib" class="vb-filter"><option value="">— Thư viện ngữ cảnh đã lưu —</option></select>
+        <button class="vb-btn" id="c-libload">Nạp bản đã chọn</button>
+        <button class="vb-btn vb-btn-danger" id="c-baseclear">Bỏ bản nền</button>
+        <span class="vb-hint" id="c-baseinfo">Chưa có bản nền.</span>
       </div>
     </div>
+  </section>
+
+  <section class="vb-card">
+    <h2>4. Chạy</h2>
     <div class="vb-row">
-      <button class="vb-btn vb-btn-primary" id="x-run">▶ Dựng context</button>
-      <button class="vb-btn vb-btn-danger" id="x-stop" disabled>■ Dừng</button>
+      <button class="vb-btn vb-btn-primary" id="c-start">▶ Tạo ngữ cảnh</button>
+      <button class="vb-btn vb-btn-danger" id="c-stop" disabled>■ Dừng</button>
       <span class="vb-spacer"></span>
-      <span class="vb-hint" id="x-status">Chưa nạp dữ liệu.</span>
+      <span class="vb-hint" id="c-status">Chưa nạp dữ liệu.</span>
     </div>
-    <div class="vb-progress"><div class="vb-progress-fill" id="x-progress"></div></div>
+    <div class="vb-progress"><div class="vb-progress-fill" id="c-progress"></div></div>
+    <details class="vb-details">
+      <summary>Nhật ký phân tích từng lô</summary>
+      <div id="c-log" class="vb-log"></div>
+    </details>
   </section>
 
   <section class="vb-card">
-    <h2>5. Kết quả (sửa tay thoải mái rồi bấm Lưu)</h2>
+    <h2>5. Kết quả ngữ cảnh</h2>
     <div class="vb-row">
-      <button class="vb-btn vb-btn-primary" id="x-use">✔ Dùng cho việc dịch</button>
-      <button class="vb-btn" id="x-save">💾 Lưu vào thư viện</button>
-      <button class="vb-btn" id="x-copy">Copy</button>
-      <button class="vb-btn" id="x-txt">⬇ .txt</button>
+      <button class="vb-btn vb-btn-primary" id="c-apply">✓ Dùng làm ngữ cảnh hiện hành</button>
+      <button class="vb-btn" id="c-save">💾 Lưu vào thư viện</button>
+      <button class="vb-btn" id="c-copy">Copy</button>
+      <button class="vb-btn" id="c-txt">⬇ .txt</button>
+      <button class="vb-btn" id="c-docx">⬇ .docx</button>
+      <span class="vb-hint" id="c-outinfo"></span>
     </div>
-    <textarea id="x-out" rows="24" placeholder="File context 8 phần sẽ hiện ở đây…"></textarea>
-  </section>
-
-  <section class="vb-card">
-    <h2>6. Thư viện context</h2>
-    <div id="x-lib" class="vb-filelist"></div>
+    <textarea id="c-out" rows="26" placeholder="File ngữ cảnh 8 phần sẽ hiện ở đây… Bạn sửa tay trực tiếp được trước khi bấm “Dùng làm ngữ cảnh hiện hành”."></textarea>
+    <p class="vb-hint">“Dùng làm ngữ cảnh hiện hành” sẽ nạp nội dung này vào kho ngữ cảnh chung, nên tab Dịch hàng loạt, Gộp bản dịch và cả trang chính đều dùng được ngay (nhớ bật ô “Dùng ngữ cảnh đã lưu”).</p>
   </section>
 </main>
 
-<!-- ============ TAB 2: HÀNG LOẠT ============ -->
+<!-- ============ TAB 2: DỊCH HÀNG LOẠT ============ -->
 <main class="vb-batch vb-studio-panel" data-panel="batch">
   <section class="vb-card">
     <h2>1. Nạp file ZIP <span class="vb-hint" id="b-keyinfo"></span></h2>
@@ -132,7 +162,6 @@
           <option value="gemini-2.5-flash" selected>gemini-2.5-flash</option>
           <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite</option>
           <option value="gemini-2.5-pro">gemini-2.5-pro</option>
-          <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite</option>
         </select>
       </div>
       <div class="vb-field"><label>Loại truyện</label>
@@ -154,7 +183,6 @@
       <label class="vb-inline"><input type="checkbox" id="b-skipsfx"> Bỏ qua SFX</label>
       <label class="vb-inline"><input type="checkbox" id="b-style" checked> Elements of Style</label>
       <label class="vb-inline"><input type="checkbox" id="b-slice" checked> Tự cắt ảnh quá dài</label>
-      <label class="vb-inline"><input type="checkbox" id="b-audit"> Soát lại OCR (gộp đúng bóng thoại + đúng thứ tự)</label>
       <label class="vb-inline"><input type="checkbox" id="b-bi" checked> Xuất song ngữ</label>
       <label class="vb-inline"><input type="checkbox" id="b-ctx" checked> Dùng ngữ cảnh đã lưu</label>
       <span class="vb-hint" id="b-ctxinfo"></span>
