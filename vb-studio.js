@@ -2,7 +2,7 @@
 (() => {
   'use strict';
   const KEY = 'visionbox_studio_tab';
-  const TABS = ['batch', 'merge'];
+  const TABS = ['context', 'batch', 'merge'];
 
   function show(name) {
     document.querySelectorAll('.vb-studio-tab').forEach(t => t.classList.toggle('is-active', t.dataset.tab === name));
@@ -17,7 +17,7 @@
     let saved = '';
     try { saved = localStorage.getItem(KEY) || ''; } catch (e) {}
     const hash = location.hash.slice(1);
-    show(TABS.includes(hash) ? hash : (TABS.includes(saved) ? saved : 'batch'));
+    show(TABS.indexOf(hash) !== -1 ? hash : (TABS.indexOf(saved) !== -1 ? saved : 'context'));
   }
 
   document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', init) : init();
