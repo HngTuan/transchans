@@ -91,29 +91,63 @@ body.light-theme .vb-bi-src { opacity: .75; }
   border-radius: 9px; padding: 6px 10px; font-size: 13px; min-width: 220px;
 }
 
-/* ---------- Studio: tab Tạo ngữ cảnh ---------- */
-.vb-genres { display:flex; flex-wrap:wrap; gap:6px; }
+/* ---------- Studio: thanh điều hướng 3 trang ---------- */
+.vb-studio-nav {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 10px 18px; border-bottom: 1px solid var(--vb-bd);
+  background: var(--vb-bg2); position: sticky; top: 0; z-index: 20;
+}
+.vb-studio-nav .vb-spacer { flex: 1 1 auto; }
+a.vb-studio-tab {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 14px; border-radius: 10px; font-size: 13px; font-weight: 600;
+  text-decoration: none; color: var(--vb-fg); border: 1px solid transparent;
+  background: transparent; transition: background .15s, border-color .15s, color .15s;
+}
+a.vb-studio-tab:hover { background: rgba(127,127,127,.12); }
+a.vb-studio-tab.is-active {
+  background: var(--vb-acc); color: #fff; border-color: var(--vb-acc);
+}
+a.vb-studio-tab-ghost { font-weight: 500; opacity: .75; }
+
+/* ---------- Chip thể loại ---------- */
+.vb-genres { display: flex; flex-wrap: wrap; gap: 6px; }
 .vb-genre-chip {
-  display:inline-flex; align-items:center; gap:5px;
-  padding:5px 11px; border:1px solid var(--vb-bd); border-radius:999px;
-  font-size:12px; cursor:pointer; user-select:none; background:var(--vb-bg2);
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 11px; border: 1px solid var(--vb-bd); border-radius: 999px;
+  font-size: 12px; cursor: pointer; user-select: none; background: var(--vb-bg2);
 }
-.vb-genre-chip input { margin:0; accent-color:var(--vb-acc); }
-.vb-genre-chip:has(input:checked) { border-color:var(--vb-acc); color:var(--vb-acc); }
+.vb-genre-chip input { margin: 0; accent-color: var(--vb-acc); }
+.vb-genre-chip:has(input:checked) { border-color: var(--vb-acc); color: var(--vb-acc); }
 
+/* ---------- Log, kết quả ---------- */
 .vb-log {
-  max-height:240px; overflow:auto; font-size:12px; line-height:1.6;
-  font-family:Consolas, ui-monospace, monospace;
-  background:var(--vb-bg2); border:1px solid var(--vb-bd);
-  border-radius:9px; padding:10px; white-space:pre-wrap;
+  max-height: 240px; overflow: auto; font-size: 12px; line-height: 1.6;
+  font-family: Consolas, ui-monospace, monospace;
+  background: var(--vb-bg2); border: 1px solid var(--vb-bd);
+  border-radius: 9px; padding: 10px; white-space: pre-wrap;
 }
-.vb-log .ok { color:#3ecf8e; }
-.vb-log .bad { color:#e5484d; }
-.vb-log .warn { color:#e5a04d; }
+.vb-log .ok { color: #3ecf8e; }
+.vb-log .bad { color: #e5484d; }
+.vb-log .warn { color: #e5a04d; }
+#c-out { font-family: Consolas, ui-monospace, monospace; font-size: 12.5px; line-height: 1.65; }
 
-#c-out { font-family:Consolas, ui-monospace, monospace; font-size:12.5px; line-height:1.65; }
-.vb-basechip {
-  display:inline-flex; align-items:center; gap:6px; font-size:12px;
-  padding:3px 10px; border-radius:999px; border:1px solid var(--vb-acc); color:var(--vb-acc);
+.vb-result { border: 1px solid var(--vb-bd); border-radius: 10px; padding: 10px; margin-bottom: 10px; }
+.vb-result textarea { width: 100%; margin-top: 8px; }
+.vb-chapter { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: 8px; }
+.vb-chapter:hover { background: rgba(127,127,127,.08); }
+.vb-chapter-name { flex: 1 1 auto; }
+.vb-chapter.is-run { background: rgba(80,140,255,.12); }
+.vb-chapter.is-done { background: rgba(62,207,142,.10); }
+.vb-chapter.is-err { background: rgba(229,72,77,.12); }
+.vb-drop.is-over { border-color: var(--vb-acc); background: rgba(80,140,255,.08); }
+
+/* ---------- Toast ---------- */
+.vb-toast {
+  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(16px);
+  background: #222; color: #fff; padding: 9px 16px; border-radius: 999px;
+  font-size: 13px; opacity: 0; pointer-events: none; transition: opacity .18s, transform .18s; z-index: 999;
 }
+.vb-toast.is-on { opacity: 1; transform: translateX(-50%) translateY(0); }
+
 
