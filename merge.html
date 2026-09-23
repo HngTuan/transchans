@@ -2,28 +2,27 @@
 <html lang="vi">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' https://generativelanguage.googleapis.com; img-src 'self' data: blob:;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' https://generativelanguage.googleapis.com; img-src 'self' data: blob:;">
   <title>VisionBox — Gộp bản dịch</title>
   <link rel="icon" href="icon.png" type="image/png">
   <link rel="stylesheet" href="styles.css">
   <link rel="stylesheet" href="vb-extra.css">
 </head>
-<body>
+<body class="vb-studio-page">
 
 <header class="topbar">
   <div class="brand"><div class="brand-text">
     <h1>VisionBox · Gộp bản dịch</h1>
-    <span class="brand-sub">Ghép 2 bản dịch cùng một chương → chọn ý hay nhất của cả hai, tự lọc SFX</span>
+    <span class="brand-sub">Hợp nhất 2 bản dịch thành bản tốt nhất</span>
   </div></div>
-  <div class="topbar-controls">
-    <button class="btn btn-secondary" id="m-back">← Về trang chính</button>
-    <span class="vb-hookstatus" id="m-keyinfo"></span>
-  </div>
+  <div class="topbar-controls"></div>
 </header>
+
+<nav class="vb-studio-nav"></nav>
 
 <main class="vb-batch">
   <section class="vb-card">
-    <h2>1. Nạp 2 bản dịch</h2>
+    <h2>1. Nạp 2 bản dịch <span class="vb-hint" id="m-keyinfo"></span></h2>
     <div class="vb-grid2">
       <div class="vb-field">
         <label>Bản A <span class="vb-hint" id="m-info-a"></span></label>
@@ -46,38 +45,27 @@
         <textarea id="m-b" rows="12" placeholder="Dán bản dịch B vào đây…"></textarea>
       </div>
     </div>
-    <p class="vb-hint">Hiểu được định dạng chuẩn (<code>=== chương ===</code> + <code>[Trang 01 — file]</code>) lẫn file text thường. File song ngữ (<code>*dòng gốc</code>) sẽ tự tách dòng gốc ra.</p>
   </section>
 
   <section class="vb-card">
     <h2>2. Cấu hình gộp</h2>
     <div class="vb-grid3">
       <div class="vb-field"><label>Model</label>
-        <select id="m-model">
-          <option value="gemini-2.5-flash" selected>gemini-2.5-flash</option>
-          <option value="gemini-2.5-pro">gemini-2.5-pro</option>
-          <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite</option>
-        </select>
-      </div>
+        <select id="m-model"><option value="gemini-2.5-flash" selected>gemini-2.5-flash</option><option value="gemini-2.5-pro">gemini-2.5-pro</option></select></div>
       <div class="vb-field"><label>Ngôn ngữ đích</label>
-        <select id="m-dst"><option value="vi">Vietnamese</option><option value="en">English</option></select>
-      </div>
+        <select id="m-dst"><option value="vi">Vietnamese</option><option value="en">English</option></select></div>
       <div class="vb-field"><label>Bản làm chuẩn số dòng</label>
-        <select id="m-anchor">
-          <option value="auto" selected>Tự động (bản nhiều dòng hơn)</option>
-          <option value="a">Bản A</option><option value="b">Bản B</option>
-        </select>
-      </div>
+        <select id="m-anchor"><option value="auto" selected>Tự động</option><option value="a">Bản A</option><option value="b">Bản B</option></select></div>
       <div class="vb-field"><label>Số dòng mỗi request</label><input type="number" id="m-chunk" min="10" step="10" value="60"></div>
       <div class="vb-field"><label>Nghỉ giữa 2 request (ms)</label><input type="number" id="m-delay" min="0" step="100" value="700"></div>
     </div>
     <div class="vb-row">
-      <label class="vb-inline"><input type="checkbox" id="m-dropsfx" checked> Loại bỏ SFX khỏi kết quả</label>
-      <label class="vb-inline"><input type="checkbox" id="m-keepnar" checked> Giữ narration / caption</label>
-      <label class="vb-inline"><input type="checkbox" id="m-bi"> Xuất kèm dòng gốc (nếu file có)</label>
+      <label class="vb-inline"><input type="checkbox" id="m-dropsfx" checked> Loại bỏ SFX</label>
+      <label class="vb-inline"><input type="checkbox" id="m-keepnar" checked> Giữ narration</label>
+      <label class="vb-inline"><input type="checkbox" id="m-bi"> Xuất kèm dòng gốc</label>
       <label class="vb-inline"><input type="checkbox" id="m-style" checked> Elements of Style</label>
       <label class="vb-inline"><input type="checkbox" id="m-ctx" checked> Dùng ngữ cảnh đã lưu</label>
-      <label class="vb-inline"><input type="checkbox" id="m-offline"> Chế độ offline (không gọi AI)</label>
+      <label class="vb-inline"><input type="checkbox" id="m-offline"> Chế độ offline</label>
     </div>
     <div class="vb-row">
       <button class="vb-btn vb-btn-primary" id="m-run">▶ Gộp</button>
@@ -94,7 +82,7 @@
       <button class="vb-btn" id="m-copy">Copy</button>
       <button class="vb-btn" id="m-txt">⬇ .txt</button>
       <button class="vb-btn" id="m-docx">⬇ .docx</button>
-      <button class="vb-btn" id="m-zip">⬇ .zip (mỗi chương 1 file)</button>
+      <button class="vb-btn" id="m-zip">⬇ .zip</button>
       <span class="vb-hint" id="m-stat"></span>
     </div>
     <textarea id="m-out" rows="20" placeholder="Bản dịch đã gộp sẽ hiện ở đây…"></textarea>
@@ -105,6 +93,8 @@
 <script src="style-guide.js"></script>
 <script src="vb-core.js"></script>
 <script src="vb-format.js"></script>
+<script src="vb-ui.js"></script>
+<script src="vb-studio.js"></script>
 <script src="vb-merge.js"></script>
 </body>
 </html>
