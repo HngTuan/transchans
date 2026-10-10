@@ -1,403 +1,332 @@
-/* vb-context.js — Studio · Tạo context (port pipeline ② của trans.py)
- * Luồng: nạp ảnh/zip → nhận diện thể loại → phân tích theo lô trang
- *        → tra web (tuỳ chọn) → gộp/cập nhật context 8 phần → lưu thư viện.
- * Cơ chế bảo hiểm: bản mới < 90% bản cũ thì GIỮ bản cũ và nối phần bổ sung.
- */
-(() => {
+/* =============================================================================
+ * vb-context.js — trang Tạo ngữ cảnh (studio.html)
+ * Pipeline theo trans.py: quét ảnh theo lô → trích xuất → gộp cộng dồn 8 phần.
+ * Cần vb-shared.js nạp trước.
+ * ========================================================================== */
+(function () {
   'use strict';
-  const VB = window.VB;
-  if (!VB) { console.error('[VB-CTX] thiếu vb-core.js'); return; }
+  const VB = window.VBS;
+  if (!VB || !document.getElementById('c-out')) return;
+  const $ = VB.$, sleep = VB.sleep;
 
-  const $ = id => document.getElementById(id);
-  const on = (id, ev, fn) => { const el = $(id); if (el) el.addEventListener(ev, fn); return el; };
-  const esc = s => String(s).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
-  const IMG_RE = /\.(png|jpe?g|webp|heic|heif|bmp|gif|avif)$/i;
+  const GENRES = {
+    'Shounen / Hành động': 'Nhịp nhanh, câu ngắn dứt khoát, giữ khí thế chiến đấu; tên chiêu thức giữ nguyên dạng gốc kèm chú thích lần đầu.',
+    'Shoujo / Lãng mạn': 'Lời thoại mềm, nhiều sắc thái cảm xúc; xưng hô biến đổi tinh tế theo tiến triển tình cảm.',
+    'Seinen / Tâm lý': 'Văn trầm, câu dài hơn, giữ tính đa nghĩa; không đơn giản hoá ẩn dụ.',
+    'Josei / Đời thường': 'Giọng trưởng thành, tự nhiên, ít kịch tính hoá.',
+    'Hài hước': 'Ưu tiên nhịp punchline; chơi chữ được phép Việt hoá miễn giữ được tiếng cười.',
+    'Kinh dị / Giật gân': 'Câu cụt, nhiều khoảng lặng; giữ sự mơ hồ gây sợ, không giải thích thừa.',
+    'Isekai / Fantasy': 'Thuật ngữ thế giới quan phải thống nhất; chức danh, cấp bậc lập bảng riêng.',
+    'Học đường': 'Xưng hô theo khối lớp và vai vế câu lạc bộ (tiền bối / hậu bối).',
+    'Thể thao': 'Giữ thuật ngữ chuyên môn; lời hô trong trận ngắn và mạnh.',
+    'Lịch sử / Cổ trang': 'Dùng từ Hán Việt hợp cảnh, tránh từ hiện đại; xưng hô theo tôn ti.',
+    'BL': 'Xưng hô nam–nam theo tiến triển quan hệ; giữ sự tinh tế, tránh khuôn mẫu.',
+    'GL': 'Xưng hô nữ–nữ theo tiến triển quan hệ; giữ sự tinh tế, tránh khuôn mẫu.',
+    'Chữa lành / Iyashikei': 'Nhịp chậm, câu êm, ưu tiên hình ảnh yên bình; không kịch tính hoá.'
+  };
 
-  let chapters = [];         // [{name, images:[{name, get:()=>Promise<Blob>}]}]
-  let running = false, stopFlag = false, resultText = '';
+  const SECTIONS = [
+    'PHẦN 1 — TỔNG QUAN TÁC PHẨM',
+    'PHẦN 2 — THỂ LOẠI & ĐỊNH HƯỚNG VĂN PHONG',
+    'PHẦN 3 — DANH SÁCH NHÂN VẬT',
+    'PHẦN 4 — BẢNG XƯNG HÔ THEO CẶP',
+    'PHẦN 5 — THUẬT NGỮ & TÊN RIÊNG',
+    'PHẦN 6 — BỐI CẢNH & THẾ GIỚI QUAN',
+    'PHẦN 7 — GIỌNG ĐIỆU RIÊNG TỪNG NHÂN VẬT',
+    'PHẦN 8 — LƯU Ý DỊCH THUẬT'
+  ];
 
-  const setStatus = t => { const e = $('x-status'); if (e) e.textContent = t; };
-  const setProgress = (d, t) => { const e = $('x-progress'); if (e) e.style.width = t ? Math.round(d / t * 100) + '%' : '0%'; };
+  const S = { pages: [], chapters: [], running: false, abort: null, base: '', baseName: '' };
 
-  // ---------- nạp nguồn ----------
-  async function loadFiles(files) {
-    const zips = files.filter(f => /\.zip$/i.test(f.name));
-    const imgs = files.filter(f => IMG_RE.test(f.name));
-    const map = new Map();
-
-    for (const f of zips) {
-      if (typeof JSZip === 'undefined') { alert('Thiếu jszip.min.js'); return; }
-      let zip;
-      try { zip = await JSZip.loadAsync(f); } catch (e) { alert('Không đọc được ' + f.name + ': ' + e.message); continue; }
-      zip.forEach((path, entry) => {
-        if (entry.dir || /(^|\/)__MACOSX\//.test(path) || /(^|\/)\._/.test(path) || !IMG_RE.test(path)) return;
-        const segs = path.split('/').filter(Boolean);
-        const fname = segs.pop();
-        const key = (zips.length > 1 ? f.name.replace(/\.zip$/i, '') + ' :: ' : '') + (segs.length ? segs.join(' / ') : '(gốc)');
-        if (!map.has(key)) map.set(key, []);
-        map.get(key).push({ name: fname, get: () => entry.async('blob') });
-      });
-    }
-    if (imgs.length) {
-      const key = '(ảnh rời)';
-      if (!map.has(key)) map.set(key, []);
-      imgs.forEach(f => map.get(key).push({ name: f.name, get: () => Promise.resolve(f) }));
-    }
-
-    chapters = Array.from(map.entries())
-      .sort((a, b) => VB.naturalCompare(a[0], b[0]))
-      .map(e => ({ name: e[0], images: e[1].sort((x, y) => VB.naturalCompare(x.name, y.name)) }));
-
-    const total = chapters.reduce((s, c) => s + c.images.length, 0);
-    const info = $('x-srcinfo');
-    if (info) info.innerHTML = chapters.length
-      ? '<b>' + chapters.length + '</b> chương · <b>' + total + '</b> trang: ' + esc(chapters.map(c => c.name).join(' · ')).slice(0, 400)
-      : 'Chưa nạp được ảnh nào.';
-
-    if (!$('x-range').value.trim() && chapters.length)
-      $('x-range').value = VB.rangeLabel(chapters.map(c => c.name));
-    refreshBase();
-    setStatus(chapters.length ? 'Sẵn sàng. Bấm “Dựng context”.' : 'Chưa có dữ liệu.');
+  /* ------------------------------------------------------------ tiện ích */
+  function log(msg, cls) {
+    const box = $('c-log'); if (!box) return;
+    const d = document.createElement('div'); if (cls) d.className = cls;
+    d.textContent = `[${new Date().toLocaleTimeString('vi-VN')}] ${msg}`;
+    box.appendChild(d); box.scrollTop = box.scrollHeight;
   }
+  const setStatus = t => { const e = $('c-status'); if (e) e.textContent = t; };
+  const setProg = p => { const e = $('c-progress'); if (e) e.style.width = Math.max(0, Math.min(100, p)) + '%'; };
 
-  // ---------- thư viện ----------
-  function refreshBase() {
-    const series = ($('x-series').value || '').trim();
-    const sel = $('x-base');
-    const items = series ? VB.CTXLIB.bySeries(series) : VB.CTXLIB.all();
-    const cur = sel.value;
-    sel.innerHTML = '<option value="">(không dùng nền — tạo mới)</option>' +
-      items.map(i => '<option value="' + i.id + '">' + esc(i.name) + ' · ' + i.text.length.toLocaleString() + ' ký tự</option>').join('');
-    if (cur && items.some(i => i.id === cur)) sel.value = cur;
-    else if ($('x-autobase').checked && items.length) sel.value = items[0].id;
-    renderLib();
+  function renderGenres() {
+    const box = $('c-genres'); box.innerHTML = '';
+    Object.keys(GENRES).forEach(g => {
+      const l = document.createElement('label'); l.className = 'vbs-chip';
+      const i = document.createElement('input'); i.type = 'checkbox'; i.value = g;
+      l.append(i, document.createTextNode(g));
+      box.appendChild(l);
+    });
   }
+  const pickedGenres = () => Array.from($('c-genres').querySelectorAll('input:checked')).map(i => i.value);
 
-  function renderLib() {
-    const box = $('x-lib');
-    const items = VB.CTXLIB.all();
-    box.innerHTML = items.length ? '' : '<span class="vb-hint">Thư viện trống.</span>';
-    items.forEach(i => {
-      const row = document.createElement('div');
-      row.className = 'vb-fileitem';
-      row.innerHTML = '<b>' + esc(i.name) + '</b>' +
-        '<span class="vb-hint">' + i.text.length.toLocaleString() + ' ký tự · ' + new Date(i.savedAt).toLocaleString() + '</span>' +
-        '<span class="vb-spacer"></span>' +
-        '<button class="vb-btn vb-btn-icon" data-use="' + i.id + '" title="Dùng cho lần dịch tới">✔ Dùng</button>' +
-        '<button class="vb-btn vb-btn-icon" data-open="' + i.id + '" title="Xem">👁</button>' +
-        '<button class="vb-btn vb-btn-icon" data-dl="' + i.id + '" title="Tải .txt">⬇</button>' +
-        '<button class="vb-btn vb-btn-icon vb-btn-danger" data-del="' + i.id + '" title="Xoá">✕</button>';
+  function renderSrc() {
+    $('c-srcinfo').textContent = S.pages.length
+      ? `Đã nạp ${S.pages.length} trang từ ${S.chapters.length || 1} nguồn.`
+      : 'Chưa nạp ảnh nào.';
+    const box = $('c-chaplist'); box.innerHTML = '';
+    S.chapters.forEach(c => {
+      const row = document.createElement('div'); row.className = 'vbs-chapter';
+      row.innerHTML = `<span class="vbs-chapter-name">${c.name}</span><span class="vbs-hint">${c.pages.length} trang</span>`;
       box.appendChild(row);
     });
-    box.onclick = e => {
-      const b = e.target.closest('button[data-use],button[data-open],button[data-dl],button[data-del]');
-      if (!b) return;
-      const id = b.dataset.use || b.dataset.open || b.dataset.dl || b.dataset.del;
-      const item = VB.CTXLIB.get(id);
-      if (!item) return;
-      if (b.dataset.use) { VB.applyContextFile(item.name, item.text, { title: item.series }); setStatus('Đã đưa "' + item.name + '" vào ngữ cảnh dịch ✔'); }
-      if (b.dataset.open) { $('x-out').value = item.text; resultText = item.text; }
-      if (b.dataset.dl) download(item.text, item.name);
-      if (b.dataset.del) { if (confirm('Xoá "' + item.name + '" khỏi thư viện?')) { VB.CTXLIB.remove(id); refreshBase(); } }
-    };
+    if (S.pages.length) setStatus('Sẵn sàng tạo ngữ cảnh.');
   }
 
-  function download(text, filename) {
-    const url = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
-    const a = document.createElement('a');
-    a.href = url; a.download = filename;
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1500);
+  function guessRange() {
+    const nums = [];
+    S.chapters.forEach(c => { const m = String(c.name).match(/(\d{1,4})/g); if (m) m.forEach(x => nums.push(parseInt(x, 10))); });
+    if (!nums.length) return '';
+    const a = Math.min.apply(null, nums), b = Math.max.apply(null, nums);
+    return a === b ? String(a) : `${a}-${b}`;
   }
 
-  // ---------- thể loại ----------
-  function renderGenres() {
-    const box = $('x-genres');
-    const chosen = VB.data.ctxb.genres || [];
-    box.innerHTML = VB.GENRES.map(g =>
-      '<label class="vb-inline vb-gchip"><input type="checkbox" value="' + esc(g) + '"' + (chosen.indexOf(g) !== -1 ? ' checked' : '') + '> ' + esc(g) + '</label>').join('');
-  }
-  const readGenres = () => Array.from($('x-genres').querySelectorAll('input:checked')).map(i => i.value);
-  function setGenres(list) {
-    const set = new Set(list || []);
-    $('x-genres').querySelectorAll('input').forEach(i => { if (set.has(i.value)) i.checked = true; });
-  }
-
-  // ---------- options ----------
-  function readOpts() {
-    return {
-      model: $('x-model').value,
-      series: ($('x-series').value || '').trim(),
-      range: VB.cleanRange($('x-range').value) || VB.rangeLabel(chapters.map(c => c.name)),
-      batchSize: Math.max(1, +$('x-batch').value || 8),
-      maxSide: Math.max(640, +$('x-maxside').value || 1280),
-      delayMs: Math.max(0, +$('x-delay').value || 800),
-      useWeb: $('x-web').checked,
-      accumulate: $('x-accum').checked,
-      unionRange: $('x-union').checked,
-      genreAuto: $('x-gauto').checked,
-      genres: readGenres(),
-      genreExtra: $('x-gextra').value,
-      notes: $('x-notes').value,
-      baseId: $('x-base').value
-    };
-  }
-  function saveOpts() {
-    const o = readOpts();
-    Object.assign(VB.data.ctxb, {
-      model: o.model, series: o.series, range: o.range, batchSize: o.batchSize, maxSide: o.maxSide,
-      delayMs: o.delayMs, useWeb: o.useWeb, accumulate: o.accumulate, unionRange: o.unionRange,
-      genreAuto: o.genreAuto, genres: o.genres, genreExtra: o.genreExtra, notes: o.notes,
-      autoBase: $('x-autobase').checked
+  /* ------------------------------------------------------------- nạp ảnh */
+  async function addZip(file) {
+    setStatus(`Đang đọc ${file.name}…`);
+    const chs = await VB.zipToChapters(file);
+    if (!chs.length) { setStatus(`${file.name}: không có ảnh.`); return; }
+    chs.forEach(c => {
+      S.chapters.push(c);
+      c.pages.forEach(p => S.pages.push({ name: `${c.name}/${p.name}`, blob: p.blob }));
     });
-    VB.save();
+    renderSrc();
+    if (!$('c-range').value) $('c-range').value = guessRange();
+    if (!$('c-series').value) $('c-series').value = file.name.replace(/\.zip$/i, '').replace(/[_-]+/g, ' ').trim();
   }
-  function fillOpts() {
-    const d = VB.data.ctxb;
-    const setV = (id, v) => { const el = $(id); if (el && v !== undefined && v !== null && v !== '') el.value = v; };
-    const setC = (id, v) => { const el = $(id); if (el) el.checked = !!v; };
-    const sel = $('x-model');
-    if (sel && d.model && !Array.from(sel.options).some(o => o.value === d.model)) {
-      const op = document.createElement('option'); op.value = d.model; op.textContent = d.model; sel.appendChild(op);
+
+  function addImages(files) {
+    const list = Array.from(files).filter(f => /^image\//.test(f.type));
+    if (!list.length) return;
+    list.sort((a, b) => VB.coll.compare(a.name, b.name));
+    const ch = { name: 'Ảnh rời', pages: list.map(f => ({ name: f.name, blob: f })) };
+    S.chapters.push(ch);
+    ch.pages.forEach(p => S.pages.push({ name: p.name, blob: p.blob }));
+    renderSrc();
+  }
+
+  /* -------------------------------------------------------------- prompt */
+  const LANG = { ja: 'tiếng Nhật', ko: 'tiếng Hàn', zh: 'tiếng Trung', en: 'tiếng Anh' };
+
+  function genreBlock() {
+    const picked = pickedGenres();
+    const extra = $('c-genre-extra').value.trim();
+    const lines = [];
+    if (picked.length) {
+      lines.push('Thể loại người dùng chỉ định: ' + picked.join(', '));
+      picked.forEach(g => lines.push(`  • ${g}: ${GENRES[g]}`));
     }
-    setV('x-model', d.model); setV('x-series', d.series || VB.data.context.title || ''); setV('x-range', d.range);
-    setV('x-batch', d.batchSize); setV('x-maxside', d.maxSide); setV('x-delay', d.delayMs);
-    setV('x-gextra', d.genreExtra); setV('x-notes', d.notes);
-    setC('x-web', d.useWeb); setC('x-accum', d.accumulate); setC('x-union', d.unionRange);
-    setC('x-gauto', d.genreAuto); setC('x-autobase', d.autoBase);
-    renderGenres();
+    if ($('c-genre-auto').checked) lines.push('Bạn được phép bổ sung thể loại khác nếu ảnh cho thấy rõ, và phải nêu lý do ngắn.');
+    if (extra) lines.push('Ghi chú văn phong riêng: ' + extra);
+    return lines.join('\n');
   }
 
-  // ---------- engine ----------
-  async function partsFor(img, maxSide) {
-    const blob0 = await img.get();
-    const blob = blob0.type ? blob0 : new Blob([blob0], { type: VB.mimeOf(img.name) });
-    const p = await VB.imageToParts(blob, { maxWidth: maxSide, sliceTall: true, sliceHeight: 2600, quality: 0.88 });
-    return p.slice(0, 2);   // trang quá dài: lấy 2 lát đầu cho đỡ tốn token
+  function extractPrompt(o) {
+    const p = [];
+    p.push(`Bạn là trợ lý biên tập truyện tranh. Bạn ĐANG NHÌN THẤY ${o.count} trang truyện ${LANG[o.src] || o.src} đính kèm (lô ${o.batch}/${o.total}).`);
+    p.push(`Nhiệm vụ: TRÍCH XUẤT dữ liệu nền phục vụ dịch thuật sang ${o.dst === 'en' ? 'tiếng Anh' : 'tiếng Việt'}. KHÔNG dịch toàn bộ truyện, chỉ ghi nhận dữ kiện.`);
+    p.push('');
+    p.push('Hãy quan sát kỹ HÌNH ẢNH chứ không chỉ chữ: khuôn mặt, tuổi ước lượng, giới tính, trang phục, đồng phục, phù hiệu, chức vụ, kiểu tóc, chiều cao tương đối, biểu cảm, khoảng cách cơ thể và ai cúi đầu trước ai. Những chi tiết này quyết định cặp xưng hô tiếng Việt.');
+    if (o.genres) { p.push(''); p.push('ĐỊNH HƯỚNG THỂ LOẠI'); p.push(o.genres); }
+    if (o.notes) { p.push(''); p.push('YÊU CẦU RIÊNG CỦA NGƯỜI DÙNG'); p.push(o.notes); }
+    p.push('');
+    p.push('Xuất đúng các mục sau, mục nào không có dữ liệu thì ghi "(chưa có)":');
+    p.push('[NHÂN VẬT] mỗi dòng: Tên gốc | Tên phiên âm/Việt | giới tính | tuổi ước lượng | vai trò | dấu hiệu nhận dạng trên hình');
+    p.push('[XƯNG HÔ] mỗi dòng: A → B | A tự xưng | A gọi B | căn cứ từ hình ảnh hoặc lời thoại');
+    p.push('[THUẬT NGỮ] mỗi dòng: chữ gốc | nghĩa | cách dịch đề xuất | ghi chú');
+    p.push('[BỐI CẢNH] gạch đầu dòng ngắn về nơi chốn, thời đại, tổ chức, luật lệ thế giới.');
+    p.push('[GIỌNG ĐIỆU] mỗi dòng: Nhân vật | đặc điểm lời nói (cộc lốc, lễ phép, giọng vùng miền, tật nói…)');
+    p.push('[SỰ KIỆN] 3–6 gạch đầu dòng tóm tắt diễn biến trong các trang này.');
+    p.push('[THỂ LOẠI] thể loại bạn nhận ra từ hình ảnh, kèm lý do một câu.');
+    p.push('Viết ngắn gọn, không văn vẻ, không lặp lại đề bài.');
+    return p.join('\n');
   }
 
-  async function detectGenres(o) {
-    const pages = [];
-    chapters.forEach(c => c.images.forEach(i => pages.push(i)));
-    if (!pages.length) return { genres: [], note: '' };
-    const step = Math.max(1, Math.floor(pages.length / 6));
-    const sample = pages.filter((_, i) => i % step === 0).slice(0, 6);
-
-    const parts = [{ text: VB.fmt(VB.CTX.P_GENRE, {
-      title_part: o.series ? ' (từ khóa: "' + o.series + '")' : '',
-      list: VB.GENRES.join(', ')
-    }) }];
-    for (const p of sample) {
-      const ip = await partsFor(p, 1024);
-      parts.push({ text: '[Trang ' + p.name + ']' });
-      parts.push(ip[0]);
-    }
-    const j = await VB.callGeminiJson({
-      model: o.model, parts, system: VB.CTX.SYS_ANALYST, schema: VB.CTX.S_GENRE,
-      generationConfig: { temperature: 0.2, maxOutputTokens: 2048 },
-      shouldStop: () => stopFlag, onStatus: setStatus
-    }) || {};
-    const n = VB.normalizeGenres(j.genres);
-    let note = (j.note || '').trim();
-    if (n.unknown.length) note = (note + ' | Nhãn ngoài danh sách: ' + n.unknown.join(', ')).trim();
-    return { genres: n.matched, note };
+  function mergePrompt(o) {
+    const p = [];
+    p.push('Bạn là người giữ hồ sơ ngữ cảnh cho nhóm dịch truyện tranh.');
+    p.push('NGUYÊN TẮC TỐI THƯỢNG: CHỈ ĐƯỢC THÊM. Tuyệt đối không xoá, không sửa, không rút gọn, không diễn giải lại bất kỳ dòng nào đã có trong HỒ SƠ CŨ. Nếu dữ liệu mới mâu thuẫn với cũ, giữ cả hai và ghi "(mâu thuẫn — cần người kiểm tra)".');
+    p.push(`Phần dữ liệu mới bổ sung phải gắn nhãn [BỔ SUNG ${o.rangeLabel}] ở cuối dòng.`);
+    p.push('');
+    p.push('Xuất lại TOÀN BỘ hồ sơ hoàn chỉnh theo đúng 8 phần dưới đây, đúng tiêu đề, không thêm phần nào khác:');
+    SECTIONS.forEach(s => p.push(s));
+    p.push('');
+    p.push('Quy định từng phần:');
+    p.push('• PHẦN 3 lập bảng dạng: Tên gốc | Tên dùng trong bản dịch | giới tính | tuổi | vai trò | nhận dạng.');
+    p.push('• PHẦN 4 là bảng xưng hô theo CẶP, mỗi dòng: A → B | A tự xưng là … | A gọi B là … | căn cứ. Phải phủ hết các cặp nhân vật đã xuất hiện.');
+    p.push('• PHẦN 5 giữ nguyên chữ gốc bên cạnh cách dịch đã chốt.');
+    p.push('• PHẦN 8 ghi các bẫy dịch: chơi chữ, kính ngữ, câu lặp, tên chiêu thức, điều cần hỏi tác giả.');
+    p.push('Viết bằng ' + (o.dst === 'en' ? 'tiếng Anh' : 'tiếng Việt') + ', dạng văn bản thuần, không markdown, không ``` .');
+    p.push('');
+    if (o.base) { p.push('===== HỒ SƠ CŨ (giữ nguyên 100%) ====='); p.push(o.base); p.push('===== HẾT HỒ SƠ CŨ ====='); p.push(''); }
+    p.push('===== DỮ LIỆU MỚI TRÍCH TỪ ẢNH =====');
+    p.push(o.fresh);
+    p.push('===== HẾT DỮ LIỆU MỚI =====');
+    if (o.genres) { p.push(''); p.push('ĐỊNH HƯỚNG THỂ LOẠI (đưa vào PHẦN 2)'); p.push(o.genres); }
+    if (o.notes) { p.push(''); p.push('YÊU CẦU RIÊNG (đưa vào PHẦN 8)'); p.push(o.notes); }
+    if (o.series) { p.push(''); p.push('Tên tác phẩm: ' + o.series); }
+    return p.join('\n');
   }
 
+  /* --------------------------------------------------------------- chạy */
   async function run() {
-    if (running) return;
-    if (!chapters.length) return alert('Chưa nạp ảnh/zip nào.');
-    if (!VB.getKeys().length) return alert('Chưa có API key. Bấm ⚙ Nâng cao → tab API Keys.');
-    saveOpts();
-    const o = readOpts();
-    if (!o.series) return alert('Hãy nhập Tên truyện — thư viện context lưu theo tên này.');
+    if (S.running) return;
+    if (!S.pages.length) { alert('Chưa nạp ảnh.'); return; }
+    if (!VB.keys.load().length) { alert('Chưa có API key. Bấm 🔑 trên thanh điều hướng.'); return; }
 
-    running = true; stopFlag = false;
-    $('x-run').disabled = true; $('x-stop').disabled = false;
+    const cfg = {
+      model: $('c-model').value,
+      src: $('c-src').value,
+      dst: $('c-dst').value,
+      size: Math.max(2, parseInt($('c-batchsize').value, 10) || 8),
+      maxB: Math.max(0, parseInt($('c-maxbatch').value, 10) || 0),
+      delay: Math.max(0, parseInt($('c-delay').value, 10) || 0),
+      width: Math.max(600, parseInt($('c-width').value, 10) || 1280),
+      accum: $('c-accum').checked
+    };
+    const series = $('c-series').value.trim() || 'Tác phẩm';
+    const range = $('c-range').value.trim() || guessRange() || 'mới';
+    const genres = genreBlock(), notes = $('c-notes').value.trim();
 
-    try {
-      // nền (context cũ)
-      const baseItem = (o.accumulate && o.baseId) ? VB.CTXLIB.get(o.baseId) : null;
-      const base = baseItem ? baseItem.text : '';
-      const oldRng = baseItem ? (baseItem.range || '?') : '';
-
-      // ① thể loại
-      let genres = o.genres.slice(), gnote = '';
-      if (o.genreAuto) {
-        setStatus('① Đang nhận diện thể loại…');
-        try {
-          const g = await detectGenres(o);
-          g.genres.forEach(x => { if (genres.indexOf(x) === -1) genres.push(x); });
-          gnote = g.note;
-          setGenres(genres);
-          setStatus('① Thể loại: ' + (genres.join(', ') || '(không rõ)'));
-        } catch (e) { setStatus('① Nhận diện thể loại lỗi: ' + e.message); }
-      }
-      let gtext = VB.genrePack(genres, o.genreExtra);
-      if (gnote) gtext += '\n- Nhận định từ ảnh: ' + gnote;
-
-      const known = base ? ('\nTÊN RIÊNG / THUẬT NGỮ ĐÃ CHỐT Ở CÁC CHƯƠNG TRƯỚC (phải dùng lại, không đặt tên khác):\n' + VB.knownBlock(base) + '\n') : '';
-
-      // ② phân tích theo lô trang
-      const tasks = [];
-      chapters.forEach(c => VB.chunkList(c.images, o.batchSize).forEach(grp => tasks.push({ chap: c.name, grp })));
-      const total = tasks.length + 2;
-      let done = 0;
-      setProgress(0, total);
-
-      const notes = [];
-      for (let i = 0; i < tasks.length && !stopFlag; i++) {
-        const t = tasks[i];
-        const files = t.grp.map(x => x.name);
-        setStatus('② Phân tích ' + t.chap + ' · ' + files[0] + ' → ' + files[files.length - 1] + ' (' + (i + 1) + '/' + tasks.length + ')');
-        const parts = [{ text: VB.fmt(VB.CTX.P_CTX_BATCH, {
-          n: t.grp.length, chap: t.chap, files: files.join(', '), genres: gtext, known,
-          notes: o.notes ? ('Yêu cầu riêng: ' + o.notes) : ''
-        }) }];
-        for (const img of t.grp) {
-          const ip = await partsFor(img, o.maxSide);
-          parts.push({ text: '[Trang ' + img.name + ']' });
-          ip.forEach(p => parts.push(p));
-        }
-        try {
-          const j = await VB.callGeminiJson({
-            model: o.model, parts, system: VB.CTX.SYS_ANALYST, schema: VB.CTX.S_CTX,
-            generationConfig: { temperature: 0.3, maxOutputTokens: 12288 },
-            shouldStop: () => stopFlag, onStatus: setStatus
-          });
-          if (j) { j._chap = t.chap; notes.push(j); }
-        } catch (e) {
-          if (/Đã dừng/.test(e.message)) break;
-          setStatus('② Lỗi lô ' + (i + 1) + ': ' + e.message);
-        }
-        done++; setProgress(done, total);
-        if (o.delayMs && i < tasks.length - 1) await VB.sleep(o.delayMs);
-      }
-      if (!notes.length) throw new Error('Không phân tích được trang nào.');
-
-      // ③ tra web
-      let web = '(không tra web)';
-      if (o.useWeb && !stopFlag) {
-        setStatus('③ Đang tra cứu thông tin tác phẩm trên mạng…');
-        try {
-          web = await VB.callGemini({
-            model: o.model,
-            parts: [{ text: VB.fmt(VB.CTX.P_RESEARCH, {
-              title: o.series || '(không rõ tên, hãy suy từ dữ kiện dưới đây)',
-              genres: genres.join(', ') || '(chưa rõ)',
-              hints: VB.hintsFrom(notes)
-            }) }],
-            system: VB.CTX.SYS_ANALYST, useSearch: true,
-            generationConfig: { temperature: 0.2, maxOutputTokens: 6144 },
-            shouldStop: () => stopFlag, onStatus: setStatus
-          });
-        } catch (e) { web = '(tra web thất bại)'; setStatus('③ Tra web lỗi: ' + e.message); }
-      }
-      done++; setProgress(done, total);
-
-      // ④ gộp / cập nhật
-      let blob = JSON.stringify(notes);
-      if (blob.length > 300000) blob = blob.slice(0, 300000) + '\n…(đã cắt bớt dữ liệu thô do quá dài)…';
-
-      const newRng = o.unionRange && oldRng ? VB.unionRange(oldRng, o.range) : o.range;
-      const stamp = new Date().toLocaleString();
-      setStatus(base ? '④ Đang CẬP NHẬT context (giữ nguyên dữ liệu cũ)…' : '④ Đang tổng hợp context…');
-
-      const prompt = base
-        ? VB.fmt(VB.CTX.P_CTX_UPDATE, { series: o.series, old_rng: oldRng || '?', rng: o.range, new_rng: newRng, genres: gtext, old: base, notes: blob, web, user: o.notes || '(không có)', layout: VB.CTX.CTX_LAYOUT, stamp })
-        : VB.fmt(VB.CTX.P_CTX_MERGE, { series: o.series, rng: o.range, genres: gtext, notes: blob, web, user: o.notes || '(không có)', layout: VB.CTX.CTX_LAYOUT });
-
-      let ctx = await VB.callGemini({
-        model: o.model, parts: [{ text: prompt }],
-        system: base ? VB.CTX.SYS_KEEPER : VB.CTX.SYS_ANALYST,
-        generationConfig: { temperature: 0.35, maxOutputTokens: 32768 },
-        shouldStop: () => stopFlag, onStatus: setStatus
-      });
-      ctx = (ctx || '').trim();
-
-      // bảo hiểm: không cho phép mất dữ liệu cũ
-      if (base) {
-        if (!ctx) ctx = base;
-        else if (ctx.length < base.length * 0.9) {
-          setStatus('⚠ Bản gộp ngắn hơn bản cũ → giữ nguyên bản cũ và nối phần bổ sung.');
-          ctx = base.trim() + '\n\n' + '='.repeat(70) + '\nPHẦN BỔ SUNG CHƯƠNG ' + o.range + ' (' + stamp + ')\n' + '='.repeat(70) + '\n\n' + ctx;
-        }
-      }
-
-      done++; setProgress(done, total);
-      resultText = ctx;
-      $('x-out').value = ctx;
-
-      const saved = VB.CTXLIB.save(o.series, newRng, ctx);
-      refreshBase();
-      $('x-base').value = saved.id;
-      if ($('x-apply').checked) VB.applyContextFile(saved.name, ctx, { title: o.series });
-      $('x-range').value = newRng;
-
-      setStatus('Hoàn tất ✔ Đã lưu "' + saved.name + '" (' + ctx.length.toLocaleString() + ' ký tự)' + ($('x-apply').checked ? ' và đưa vào ngữ cảnh dịch.' : '.'));
-    } catch (e) {
-      console.error(e);
-      setStatus('✘ ' + e.message);
-    } finally {
-      running = false;
-      $('x-run').disabled = false; $('x-stop').disabled = true;
-    }
-  }
-
-  // ---------- init ----------
-  function init() {
-    if (!$('x-out')) return;
-    fillOpts();
-    refreshBase();
-
-    const ki = $('x-keyinfo');
-    if (ki) ki.textContent = VB.getKeys().length ? VB.getKeys().length + ' API key sẵn sàng' : '⚠ Chưa có API key';
-
-    on('x-file', 'change', e => { const f = Array.from(e.target.files || []); if (f.length) loadFiles(f); e.target.value = ''; });
-    const drop = $('x-drop');
-    if (drop) {
-      ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
-      ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
-      drop.addEventListener('drop', e => { const f = Array.from((e.dataTransfer || {}).files || []); if (f.length) loadFiles(f); });
+    let batches = [];
+    for (let i = 0; i < S.pages.length; i += cfg.size) batches.push(S.pages.slice(i, i + cfg.size));
+    if (cfg.maxB && batches.length > cfg.maxB) {
+      const step = batches.length / cfg.maxB, picked = [];
+      for (let i = 0; i < cfg.maxB; i++) picked.push(batches[Math.floor(i * step)]);
+      batches = picked;
+      log(`Giới hạn ${cfg.maxB} lô — lấy mẫu rải đều toàn bộ truyện.`, 'warn');
     }
 
-    on('x-series', 'input', () => { refreshBase(); saveOpts(); });
-    on('x-autobase', 'change', refreshBase);
-    on('x-run', 'click', run);
-    on('x-stop', 'click', () => { stopFlag = true; setStatus('Đang dừng…'); });
-    on('x-refresh', 'click', refreshBase);
-    on('x-gall', 'click', () => $('x-genres').querySelectorAll('input').forEach(i => { i.checked = true; }));
-    on('x-gnone', 'click', () => $('x-genres').querySelectorAll('input').forEach(i => { i.checked = false; }));
+    S.running = true; S.abort = new AbortController();
+    $('c-start').disabled = true; $('c-stop').disabled = false;
+    setProg(0); log(`Bắt đầu: ${S.pages.length} trang → ${batches.length} lô, model ${cfg.model}`);
 
-    on('x-copy', 'click', async () => {
-      try { await navigator.clipboard.writeText($('x-out').value); setStatus('Đã copy ✔'); } catch (e) { setStatus('Copy thất bại.'); }
-    });
-    on('x-txt', 'click', () => {
-      const t = $('x-out').value.trim();
-      if (!t) return setStatus('Chưa có nội dung.');
-      download(t, VB.safeName($('x-series').value || 'context') + ' ' + (VB.cleanRange($('x-range').value) || 'toan-bo') + '.txt');
-    });
-    on('x-save', 'click', () => {
-      const t = $('x-out').value.trim();
-      if (!t) return setStatus('Chưa có nội dung.');
-      const s = ($('x-series').value || '').trim();
-      if (!s) return alert('Nhập Tên truyện trước khi lưu.');
-      const it = VB.CTXLIB.save(s, $('x-range').value, t);
-      refreshBase(); $('x-base').value = it.id;
-      setStatus('Đã lưu (kể cả phần bạn sửa tay): ' + it.name);
-    });
-    on('x-use', 'click', () => {
-      const t = $('x-out').value.trim();
-      if (!t) return setStatus('Chưa có nội dung.');
-      const s = ($('x-series').value || '').trim() || 'context';
-      VB.applyContextFile(VB.safeName(s) + ' ' + (VB.cleanRange($('x-range').value) || 'toan-bo') + '.txt', t, { title: s });
-      setStatus('Đã đưa vào ngữ cảnh dịch ✔ (mọi lần dịch sau sẽ dùng file này)');
-    });
+    try { await VB.models.discover(); } catch (e) { log('Không dò được model: ' + e.message, 'warn'); }
 
-    ['x-model', 'x-range', 'x-batch', 'x-maxside', 'x-delay', 'x-web', 'x-accum', 'x-union', 'x-gauto', 'x-gextra', 'x-notes']
-      .forEach(id => on(id, 'change', saveOpts));
+    const fresh = [];
+    let fails = 0;
+    for (let i = 0; i < batches.length; i++) {
+      if (S.abort.signal.aborted) break;
+      const b = batches[i];
+      setStatus(`Phân tích lô ${i + 1}/${batches.length} (${b.length} trang)…`);
+      try {
+        const parts = [{ text: extractPrompt({ count: b.length, batch: i + 1, total: batches.length, src: cfg.src, dst: cfg.dst, genres, notes }) }];
+        for (const p of b) {
+          const arr = await VB.img.parts(p.blob, cfg.width, false);
+          parts.push({ inline_data: { mime_type: 'image/jpeg', data: arr[0] } });
+        }
+        const r = await VB.gemini.call(cfg.model, parts, { signal: S.abort.signal, maxTokens: 4096, onNote: m => log(m, 'warn') });
+        fresh.push(`----- LÔ ${i + 1} (${b[0].name} → ${b[b.length - 1].name}) -----\n${r.text}`);
+        log(`Lô ${i + 1} xong (${r.text.length} ký tự, model ${r.model})`, 'ok');
+        fails = 0;
+      } catch (e) {
+        const msg = String(e.message || e);
+        if (msg.includes('dừng')) break;
+        log(`Lô ${i + 1} lỗi: ${msg}`, 'bad');
+        if (++fails >= 3 || /Không còn API key|404/.test(msg)) {
+          alert('Dừng sớm vì lỗi lặp lại:\n\n' + msg + '\n\nBấm 🔑 → Kiểm tra key để chẩn đoán.');
+          break;
+        }
+      }
+      setProg(((i + 1) / batches.length) * 90);
+      if (cfg.delay) await sleep(cfg.delay);
+    }
 
-    window.addEventListener('beforeunload', e => { if (running) { e.preventDefault(); e.returnValue = ''; } });
+    if (fresh.length && !S.abort.signal.aborted) {
+      setStatus('Đang tổng hợp hồ sơ ngữ cảnh…');
+      log('Tổng hợp ' + fresh.length + ' lô thành hồ sơ 8 phần…');
+      const base = cfg.accum ? (S.base || '') : '';
+      try {
+        const r = await VB.gemini.call(cfg.model, [{
+          text: mergePrompt({ base, fresh: fresh.join('\n\n'), genres, notes, series, dst: cfg.dst, rangeLabel: 'CHƯƠNG ' + range })
+        }], { signal: S.abort.signal, maxTokens: 8192, temperature: 0.25, onNote: m => log(m, 'warn') });
+
+        let final = r.text.replace(/^```[a-z]*\n?|```$/gm, '').trim();
+        if (base && final.length < base.length * 0.85) {
+          log('Bản gộp ngắn hơn hồ sơ cũ — kích hoạt bảo hiểm, nối thêm thay vì thay thế.', 'warn');
+          final = base + `\n\n===== [BỔ SUNG CHƯƠNG ${range}] =====\n` + final;
+        }
+        $('c-out').value = final;
+        $('c-outinfo').textContent = `${final.length.toLocaleString('vi-VN')} ký tự · ${series} ${range}`;
+        log('Hoàn tất.', 'ok');
+      } catch (e) {
+        log('Lỗi tổng hợp: ' + e.message, 'bad');
+        $('c-out').value = (S.base ? S.base + '\n\n' : '') + '===== DỮ LIỆU THÔ CHƯA TỔNG HỢP =====\n' + fresh.join('\n\n');
+      }
+    }
+
+    S.running = false; setProg(100);
+    $('c-start').disabled = false; $('c-stop').disabled = true;
+    setStatus(S.abort.signal.aborted ? 'Đã dừng.' : 'Xong — kiểm tra kết quả ở mục 5.');
   }
 
-  document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', init) : init();
+  /* -------------------------------------------------------- thư viện nền */
+  function refreshLib() {
+    const sel = $('c-lib'); const cur = sel.value;
+    sel.innerHTML = '<option value="">— Thư viện ngữ cảnh đã lưu —</option>';
+    VB.ctx.libList().forEach((it, i) => {
+      const o = document.createElement('option');
+      o.value = String(i);
+      o.textContent = `${it.name} (${new Date(it.at).toLocaleDateString('vi-VN')})`;
+      sel.appendChild(o);
+    });
+    sel.value = cur;
+  }
+  function setBase(text, name) {
+    S.base = text || ''; S.baseName = name || '';
+    $('c-baseinfo').textContent = S.base ? `Nền: ${S.baseName} · ${S.base.length.toLocaleString('vi-VN')} ký tự` : 'Chưa có bản nền.';
+  }
+
+  /* ------------------------------------------------------------- sự kiện */
+  function bind() {
+    $('c-zip').onchange = async e => { for (const f of Array.from(e.target.files || [])) { try { await addZip(f); } catch (x) { setStatus('Lỗi zip: ' + x.message); } } e.target.value = ''; };
+    $('c-imgs').onchange = e => { addImages(e.target.files); e.target.value = ''; };
+
+    const d = $('c-drop');
+    ['dragenter', 'dragover'].forEach(t => d.addEventListener(t, e => { e.preventDefault(); d.classList.add('over'); }));
+    ['dragleave', 'drop'].forEach(t => d.addEventListener(t, e => { e.preventDefault(); d.classList.remove('over'); }));
+    d.addEventListener('drop', async e => {
+      const fs = Array.from(e.dataTransfer.files || []);
+      for (const f of fs) if (/\.zip$/i.test(f.name)) { try { await addZip(f); } catch (x) { setStatus('Lỗi zip: ' + x.message); } }
+      addImages(fs.filter(f => /^image\//.test(f.type)));
+    });
+
+    $('c-start').onclick = run;
+    $('c-stop').onclick = () => { if (S.abort) S.abort.abort(); setStatus('Đang dừng…'); };
+
+    $('c-basefile').onchange = async e => {
+      const f = e.target.files && e.target.files[0]; if (!f) return;
+      try { setBase(await VB.file.read(f), f.name); log('Đã nạp bản nền: ' + f.name, 'ok'); }
+      catch (x) { alert('Không đọc được file: ' + x.message); }
+      e.target.value = '';
+    };
+    $('c-libload').onclick = () => {
+      const i = $('c-lib').value; if (i === '') { alert('Chưa chọn bản nào.'); return; }
+      const it = VB.ctx.libList()[parseInt(i, 10)];
+      if (it) { setBase(it.text, it.name); log('Nạp từ thư viện: ' + it.name, 'ok'); }
+    };
+    $('c-baseclear').onclick = () => setBase('', '');
+
+    $('c-apply').onclick = () => {
+      const t = $('c-out').value.trim();
+      if (!t) { alert('Chưa có nội dung.'); return; }
+      VB.ctx.set(t); VB.toast('Đã đặt làm ngữ cảnh hiện hành');
+    };
+    $('c-save').onclick = () => {
+      const t = $('c-out').value.trim(); if (!t) { alert('Chưa có nội dung.'); return; }
+      const name = `${$('c-series').value.trim() || 'Tác phẩm'} ${$('c-range').value.trim() || guessRange() || ''}`.trim();
+      VB.ctx.libSave(name, t); refreshLib(); VB.toast('Đã lưu: ' + name);
+    };
+    $('c-copy').onclick = () => VB.file.copy($('c-out').value);
+    $('c-txt').onclick = () => VB.file.saveAs($('c-out').value, 'txt', `${$('c-series').value || 'ngu-canh'} ${$('c-range').value || ''}`);
+    $('c-docx').onclick = () => VB.file.saveAs($('c-out').value, 'docx', `${$('c-series').value || 'ngu-canh'} ${$('c-range').value || ''}`);
+
+    window.addEventListener('beforeunload', e => { if (S.running) { e.preventDefault(); e.returnValue = ''; } });
+  }
+
+  renderGenres(); bind(); refreshLib(); renderSrc();
+  if ($('c-autobase').checked) {
+    const lib = VB.ctx.libList();
+    if (lib.length) setBase(lib[0].text, lib[0].name + ' (tự nạp)');
+    else { const cur = VB.ctx.get(); if (cur) setBase(cur, 'ngữ cảnh hiện hành'); }
+  }
 })();
