@@ -1,100 +1,138 @@
 <!DOCTYPE html>
 <html lang="vi">
 <head>
-  <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' https://generativelanguage.googleapis.com; img-src 'self' data: blob:;">
-  <title>VisionBox — Dịch hàng loạt</title>
-  <link rel="icon" href="icon.png" type="image/png">
-  <link rel="stylesheet" href="styles.css">
-  <link rel="stylesheet" href="vb-extra.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' https://generativelanguage.googleapis.com; img-src 'self' data: blob:;">
+<title>VisionBox — Dịch hàng loạt</title>
+<link rel="icon" href="icon.png" type="image/png">
+<link rel="stylesheet" href="vb-extra.css">
 </head>
-<body class="vb-studio-page">
+<body>
 
-<header class="topbar">
-  <div class="brand"><div class="brand-text">
+<header class="vbs-top">
+  <div>
     <h1>VisionBox · Dịch hàng loạt</h1>
-    <span class="brand-sub">Nạp zip → dịch cả bộ → xuất txt/docx/zip</span>
-  </div></div>
-  <div class="topbar-controls"></div>
+    <p class="vbs-hint">Nạp zip → dịch cả bộ → xuất txt/docx/zip</p>
+  </div>
 </header>
 
-<nav class="vb-studio-nav"></nav>
+<nav class="vbs-nav"></nav>
 
-<main class="vb-batch">
-  <section class="vb-card">
-    <h2>1. Nạp file ZIP <span class="vb-hint" id="b-keyinfo"></span></h2>
-    <div class="vb-drop" id="b-drop">
+<main class="vbs-main">
+
+  <section class="vbs-card">
+    <h2>1. Nạp file ZIP</h2>
+    <div class="vbs-drop" id="b-drop">
       <p>Kéo &amp; thả file <b>.zip</b> vào đây, hoặc</p>
-      <label class="vb-btn vb-btn-primary" for="b-zip">Chọn file .zip</label>
+      <label class="vbs-btn primary" for="b-zip">Chọn file .zip</label>
       <input type="file" id="b-zip" accept=".zip,application/zip" multiple hidden>
-      <p class="vb-hint">Mỗi <b>folder</b> trong zip = 1 chương. Ảnh nằm ngoài folder gom vào chương “(gốc)”.</p>
+      <p class="vbs-hint">Mỗi <b>folder</b> trong zip = 1 chương. Ảnh nằm ngoài folder gom vào chương “(gốc)”.</p>
     </div>
-    <div id="b-zipinfo" class="vb-hint"></div>
+    <div id="b-zipinfo" class="vbs-hint"></div>
   </section>
 
-  <section class="vb-card">
+  <section class="vbs-card">
     <h2>2. Cấu hình dịch</h2>
-    <div class="vb-grid3">
-      <div class="vb-field"><label>Model</label>
-        <select id="b-model">
-          <option value="gemini-2.5-flash" selected>gemini-2.5-flash</option>
-          <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite</option>
-          <option value="gemini-2.5-pro">gemini-2.5-pro</option>
-        </select></div>
-      <div class="vb-field"><label>Loại truyện</label>
-        <select id="b-type"><option value="manga">Manga (phải → trái)</option><option value="webtoon">Webtoon (trên → dưới)</option></select></div>
-      <div class="vb-field"><label>Ngôn ngữ gốc</label>
-        <select id="b-src"><option value="ja">Japanese (日本語)</option><option value="ko">Korean (한국어)</option><option value="zh">Chinese (中文)</option><option value="en">English</option></select></div>
-      <div class="vb-field"><label>Dịch sang</label>
-        <select id="b-dst"><option value="vi">Vietnamese</option><option value="en">English</option><option value="ja">Japanese</option><option value="ko">Korean</option><option value="zh">Chinese</option></select></div>
-      <div class="vb-field"><label>Luồng song song</label>
-        <select id="b-conc"><option value="1">1 (an toàn nhất)</option><option value="2">2</option><option value="3">3</option></select></div>
-      <div class="vb-field"><label>Nghỉ giữa 2 ảnh (ms)</label><input type="number" id="b-delay" min="0" step="100" value="700"></div>
-      <div class="vb-field"><label>Thu nhỏ ảnh về tối đa (px)</label><input type="number" id="b-width" min="600" step="100" value="1400"></div>
+    <div class="vbs-grid3">
+      <div class="vbs-field">
+        <label>Model <span class="vbs-hint" id="b-modelinfo"></span></label>
+        <select id="b-model" data-model></select>
+      </div>
+      <div class="vbs-field">
+        <label>Loại truyện</label>
+        <select id="b-type">
+          <option value="manga">Manga (phải → trái)</option>
+          <option value="webtoon">Webtoon (trên → dưới)</option>
+        </select>
+      </div>
+      <div class="vbs-field">
+        <label>Ngôn ngữ gốc</label>
+        <select id="b-src">
+          <option value="ja">Japanese (日本語)</option>
+          <option value="ko">Korean (한국어)</option>
+          <option value="zh">Chinese (中文)</option>
+          <option value="en">English</option>
+        </select>
+      </div>
+      <div class="vbs-field">
+        <label>Dịch sang</label>
+        <select id="b-dst">
+          <option value="vi">Vietnamese</option>
+          <option value="en">English</option>
+          <option value="ja">Japanese</option>
+          <option value="ko">Korean</option>
+          <option value="zh">Chinese</option>
+        </select>
+      </div>
+      <div class="vbs-field">
+        <label>Luồng song song</label>
+        <select id="b-conc">
+          <option value="1">1 (an toàn nhất)</option>
+          <option value="2">2</option>
+          <option value="3">3</option>
+        </select>
+      </div>
+      <div class="vbs-field">
+        <label>Nghỉ giữa 2 ảnh (ms)</label>
+        <input type="number" id="b-delay" min="0" step="100" value="700">
+      </div>
+      <div class="vbs-field">
+        <label>Thu nhỏ ảnh về tối đa (px)</label>
+        <input type="number" id="b-width" min="600" step="100" value="1400">
+      </div>
     </div>
-    <div class="vb-row">
-      <label class="vb-inline"><input type="checkbox" id="b-skipsfx"> Bỏ qua SFX</label>
-      <label class="vb-inline"><input type="checkbox" id="b-style" checked> Elements of Style</label>
-      <label class="vb-inline"><input type="checkbox" id="b-slice" checked> Tự cắt ảnh quá dài</label>
-      <label class="vb-inline"><input type="checkbox" id="b-bi" checked> Xuất song ngữ</label>
-      <label class="vb-inline"><input type="checkbox" id="b-ctx" checked> Dùng ngữ cảnh đã lưu</label>
-      <span class="vb-hint" id="b-ctxinfo"></span>
+
+    <div class="vbs-row">
+      <label class="vbs-inline"><input type="checkbox" id="b-skipsfx"> Bỏ qua SFX</label>
+      <label class="vbs-inline"><input type="checkbox" id="b-style" checked> Elements of Style</label>
+      <label class="vbs-inline"><input type="checkbox" id="b-slice" checked> Tự cắt ảnh quá dài</label>
+      <label class="vbs-inline"><input type="checkbox" id="b-bi" checked> Xuất song ngữ</label>
+      <label class="vbs-inline"><input type="checkbox" id="b-ctx" checked> Dùng ngữ cảnh đã lưu</label>
+      <span class="vbs-hint" id="b-ctxinfo"></span>
+    </div>
+
+    <div class="vbs-row">
+      <button type="button" class="vbs-btn" id="b-refresh-models">↻ Nạp lại danh sách model</button>
+      <button type="button" class="vbs-btn" id="b-test">🔍 Kiểm tra key &amp; model</button>
     </div>
   </section>
 
-  <section class="vb-card">
+  <section class="vbs-card">
     <h2>3. Chọn chương cần dịch</h2>
-    <div class="vb-row">
-      <button class="vb-btn" id="b-all">Chọn tất cả</button>
-      <button class="vb-btn" id="b-none">Bỏ chọn</button>
-      <button class="vb-btn" id="b-invert">Đảo chọn</button>
-      <input type="text" id="b-filter" placeholder="Lọc theo tên chương…" class="vb-filter">
-      <span class="vb-spacer"></span>
-      <button class="vb-btn vb-btn-primary" id="b-start">▶ Bắt đầu dịch</button>
-      <button class="vb-btn vb-btn-danger" id="b-stop" disabled>■ Dừng</button>
+    <div class="vbs-row">
+      <button type="button" class="vbs-btn" id="b-all">Chọn tất cả</button>
+      <button type="button" class="vbs-btn" id="b-none">Bỏ chọn</button>
+      <button type="button" class="vbs-btn" id="b-invert">Đảo chọn</button>
+      <input type="text" id="b-filter" class="vbs-filter" placeholder="Lọc theo tên chương…">
+      <span class="vbs-sp"></span>
+      <button type="button" class="vbs-btn primary" id="b-start">▶ Bắt đầu dịch</button>
+      <button type="button" class="vbs-btn danger" id="b-stop" disabled>■ Dừng</button>
     </div>
-    <div class="vb-progress"><div class="vb-progress-fill" id="b-progress"></div></div>
-    <div class="vb-hint" id="b-status">Chưa nạp chương nào.</div>
-    <div id="b-list" class="vb-chapters"></div>
+    <div class="vbs-progress"><div id="b-progress"></div></div>
+    <div class="vbs-hint" id="b-status">Chưa nạp chương nào.</div>
+    <div id="b-list" class="vbs-chapters"></div>
+    <details id="b-log-open" open>
+      <summary>Nhật ký dịch</summary>
+      <div id="b-log" class="vbs-log"></div>
+    </details>
   </section>
 
-  <section class="vb-card">
+  <section class="vbs-card">
     <h2>4. Kết quả</h2>
-    <div class="vb-row">
-      <button class="vb-btn vb-btn-primary" id="b-zipall">⬇ Tải tất cả (.zip)</button>
-      <button class="vb-btn" id="b-copyall">Copy tất cả</button>
-      <span class="vb-hint">Mỗi chương là 1 file .txt trong zip.</span>
+    <div class="vbs-row">
+      <button type="button" class="vbs-btn primary" id="b-zipall">⬇ Tải tất cả (.zip)</button>
+      <button type="button" class="vbs-btn" id="b-copyall">Copy tất cả</button>
+      <span class="vbs-hint">Mỗi chương là 1 file .txt trong zip.</span>
     </div>
-    <div id="b-results" class="vb-results"></div>
+    <div id="b-results" class="vbs-results"></div>
   </section>
+
 </main>
 
 <script src="jszip.min.js"></script>
 <script src="style-guide.js"></script>
-<script src="vb-core.js"></script>
-<script src="vb-format.js"></script>
-<script src="vb-ui.js"></script>
-<script src="vb-studio.js"></script>
+<script src="vb-shared.js"></script>
 <script src="vb-batch.js"></script>
 </body>
 </html>
