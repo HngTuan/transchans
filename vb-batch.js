@@ -26,10 +26,12 @@
 
   /* -------------------------------------------------------------- prompt */
   const LANG = { ja: 'tiếng Nhật', ko: 'tiếng Hàn', zh: 'tiếng Trung', en: 'tiếng Anh', vi: 'tiếng Việt' };
-  function styleGuide() {
-    const g = window.STYLE_GUIDE || window.VB_STYLE_GUIDE || window.styleGuide;
-    return !g ? '' : (typeof g === 'string' ? g : (g.text || g.prompt || g.content || ''));
+  function styleGuide(dst) {
+    const names = { vi: 'Vietnamese', en: 'English', ja: 'Japanese', ko: 'Korean', zh: 'Chinese' };
+    const s = window.STYLE_SKILL;
+    return s && typeof s.buildBlock === 'function' ? s.buildBlock(names[dst] || 'Vietnamese', 'translate') : '';
   }
+
 
   function prompt(o) {
     const src = LANG[o.src] || o.src, dst = LANG[o.dst] || o.dst;
