@@ -1,4 +1,4 @@
-/* vb-ui.js — UI mở rộng: modal 3 tab (API Keys | Ngữ cảnh | Song ngữ & Xuất)
+/* vb-ui.js — UI mở rộng: hộp thoại 3 tab (API Keys | Ngữ cảnh | Song ngữ & Xuất)
  * + hook fetch: xoay key khi 429 và chèn ngữ cảnh + luật nhìn ảnh/xưng hô vào prompt renderer.js
  */
 (() => {
@@ -6,6 +6,7 @@
   if (!window.VB) { console.error('[VB-UI] Thiếu vb-core.js'); return; }
   const VB = window.VB;
   const $ = id => document.getElementById(id);
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
   // ============ 1. FETCH GATE ============
   const origFetch = window.fetch.bind(window);
@@ -142,34 +143,39 @@
     }
   };
 
-  // ============ 2. MODAL ============
+  // ============ 2. HỘP THOẠI ⚙ NÂNG CAO ============
+  const STUDIO_CUR = 'vbs_context_current_v1';
+  const STUDIO_LIB = 'vbs_context_lib_v1';
+  const DIRTY_SEL = '#vb-key-text,#vb-key-rpm,[name="vb-keymode"],#vb-ctx-enabled,#vb-ctx-ocr,#vb-ctx-title,' +
+    '#vb-ctx-tone,#vb-ctx-synopsis,#vb-ctx-glossary,#vb-ctx-notes,#vb-bi-enabled,#vb-bi-sfx,#vb-bi-marker,#vb-bi-sfxtag';
+
   const MODAL_HTML = `
 <div class="vb-modal-backdrop" id="vb-modal" hidden>
-  <div class="vb-modal">
+  <div class="vb-modal" role="dialog" aria-modal="true" aria-label="Cài đặt nâng cao">
     <div class="vb-modal-head">
-      <div class="vb-tabs">
-        <button class="vb-tab is-active" data-tab="keys">🔑 API Keys</button>
-        <button class="vb-tab" data-tab="ctx">📚 Ngữ cảnh</button>
-        <button class="vb-tab" data-tab="bi">🈁 Song ngữ &amp; Xuất</button>
+      <div class="vb-tabs" id="vb-tabs" role="tablist" aria-label="Nhóm cài đặt">
+        <button type="button" class="vb-tab is-active" role="tab" aria-selected="true" data-tab="keys">🔑 API Keys</button>
+        <button type="button" class="vb-tab" role="tab" aria-selected="false" tabindex="-1" data-tab="ctx">📚 Ngữ cảnh</button>
+        <button type="button" class="vb-tab" role="tab" aria-selected="false" tabindex="-1" data-tab="bi">🈁 Song ngữ &amp; Xuất</button>
       </div>
-      <button class="vb-x" id="vb-close" title="Đóng">✕</button>
+      <button type="button" class="vb-x" id="vb-close" title="Đóng (Esc)" aria-label="Đóng">✕</button>
     </div>
 
     <div class="vb-modal-body">
-      <section class="vb-pane is-active" data-pane="keys">
+      <section class="vb-pane is-active" role="tabpanel" data-pane="keys">
         <p class="vb-hint">Nhập <b>bao nhiêu key cũng được</b> — <b>mỗi key một dòng</b>, hoặc bấm “Nhập từ file”. Tool tự lọc trùng, xoay vòng từng request, key nào dính <b>429</b> sẽ được cho nghỉ 45 giây và tự chuyển sang key khác.</p>
         <div class="vb-field">
-          <label>Danh sách API key (mỗi dòng 1 key)</label>
-          <textarea id="vb-key-text" rows="8" spellcheck="false" placeholder="AIzaSy...1&#10;AIzaSy...2&#10;AIzaSy...3"></textarea>
+          <label for="vb-key-text">Danh sách API key (mỗi dòng 1 key)</label>
+          <textarea id="vb-key-text" class="vb-masked" rows="8" spellcheck="false" autocomplete="off" placeholder="AIzaSy...1&#10;AIzaSy...2&#10;AIzaSy...3"></textarea>
         </div>
         <div class="vb-row">
           <label class="vb-btn vb-btn-primary" for="vb-key-file">📂 Nhập từ file</label>
           <input type="file" id="vb-key-file" accept=".txt,.csv,.json,.env,.list,text/plain" multiple hidden>
-          <button class="vb-btn" id="vb-key-paste">📋 Dán từ clipboard</button>
-          <button class="vb-btn" id="vb-key-eye">👁 Hiện/ẩn</button>
-          <button class="vb-btn" id="vb-key-dedup">🧹 Lọc trùng &amp; chuẩn hoá</button>
-          <button class="vb-btn" id="vb-key-test">✓ Kiểm tra tất cả</button>
-          <button class="vb-btn vb-btn-danger" id="vb-key-clear">Xoá hết</button>
+          <button type="button" class="vb-btn" id="vb-key-paste">📋 Dán từ clipboard</button>
+          <button type="button" class="vb-btn" id="vb-key-eye">👁 Hiện/ẩn</button>
+          <button type="button" class="vb-btn" id="vb-key-dedup">🧹 Lọc trùng &amp; chuẩn hoá</button>
+          <button type="button" class="vb-btn" id="vb-key-test">✓ Kiểm tra tất cả</button>
+          <button type="button" class="vb-btn vb-btn-danger" id="vb-key-clear">Xoá hết</button>
           <span class="vb-spacer"></span>
           <span class="vb-hint" id="vb-key-count"></span>
         </div>
@@ -177,43 +183,52 @@
           <label class="vb-inline"><input type="radio" name="vb-keymode" value="rotate"> Xoay vòng (khuyên dùng)</label>
           <label class="vb-inline"><input type="radio" name="vb-keymode" value="sticky"> Dùng 1 key đến khi lỗi</label>
           <span class="vb-spacer"></span>
-          <label class="vb-inline">RPM tối đa mỗi key <input type="number" id="vb-key-rpm" min="1" max="120" step="1" style="width:80px"></label>
+          <label class="vb-inline">RPM tối đa mỗi key <input type="number" class="vb-num" id="vb-key-rpm" min="1" max="120" step="1"></label>
         </div>
         <div class="vb-keystatus" id="vb-key-status"></div>
         <div id="vb-key-test-out" class="vb-hint"></div>
       </section>
 
-      <section class="vb-pane" data-pane="ctx">
+      <section class="vb-pane" role="tabpanel" data-pane="ctx">
         <label class="vb-inline vb-strong"><input type="checkbox" id="vb-ctx-enabled"> Bật ngữ cảnh khi dịch</label>
         <label class="vb-inline"><input type="checkbox" id="vb-ctx-ocr"> Dùng cả cho bước OCR (chính xác tên riêng hơn, tốn token hơn)</label>
-        <p class="vb-hint">Muốn tạo file ngữ cảnh đầy đủ 8 phần (hồ sơ nhân vật, bảng xưng hô theo cặp, bảng tra chữ gốc…) thì vào <b>Studio → 📚 Tạo context</b>.</p>
+        <p class="vb-hint">Muốn tạo hồ sơ ngữ cảnh đầy đủ 8 phần (nhân vật, bảng xưng hô theo cặp, thuật ngữ…) thì vào <b>Studio → 📚 Tạo ngữ cảnh</b>, rồi lấy về ở mục “Ngữ cảnh đã tạo trong Studio” bên dưới.</p>
 
         <div class="vb-grid2">
-          <div class="vb-field"><label>Tên truyện</label><input type="text" id="vb-ctx-title" placeholder="VD: Kimi no Na wa"></div>
-          <div class="vb-field"><label>Văn phong / giọng kể</label><input type="text" id="vb-ctx-tone" placeholder="VD: học đường, hài nhẹ, xưng hô tớ–cậu"></div>
+          <div class="vb-field"><label for="vb-ctx-title">Tên truyện</label><input type="text" id="vb-ctx-title" placeholder="VD: Kimi no Na wa"></div>
+          <div class="vb-field"><label for="vb-ctx-tone">Văn phong / giọng kể</label><input type="text" id="vb-ctx-tone" placeholder="VD: học đường, hài nhẹ, xưng hô tớ–cậu"></div>
         </div>
-        <div class="vb-field"><label>Tóm tắt / bối cảnh</label><textarea id="vb-ctx-synopsis" rows="4"></textarea></div>
-        <div class="vb-field"><label>Bảng thuật ngữ &amp; tên riêng (mỗi dòng: gốc = bản dịch)</label><textarea id="vb-ctx-glossary" rows="5" placeholder="鈴木 = Suzuki&#10;先輩 = tiền bối"></textarea></div>
-        <div class="vb-field"><label>Ghi chú thêm cho AI</label><textarea id="vb-ctx-notes" rows="3"></textarea></div>
+        <div class="vb-field"><label for="vb-ctx-synopsis">Tóm tắt / bối cảnh</label><textarea id="vb-ctx-synopsis" rows="4"></textarea></div>
+        <div class="vb-field"><label for="vb-ctx-glossary">Bảng thuật ngữ &amp; tên riêng (mỗi dòng: gốc = bản dịch)</label><textarea id="vb-ctx-glossary" rows="5" placeholder="鈴木 = Suzuki&#10;先輩 = tiền bối"></textarea></div>
+        <div class="vb-field"><label for="vb-ctx-notes">Ghi chú thêm cho AI</label><textarea id="vb-ctx-notes" rows="3"></textarea></div>
+
+        <div class="vb-field">
+          <label>Ngữ cảnh đã tạo trong Studio</label>
+          <div class="vb-row">
+            <select id="vb-ctx-studio" aria-label="Chọn ngữ cảnh từ Studio"></select>
+            <button type="button" class="vb-btn" id="vb-ctx-studio-add">+ Thêm vào danh sách file</button>
+          </div>
+          <p class="vb-hint">Bản được thêm sẽ nằm trong danh sách file bên dưới và áp dụng ngay (không cần bấm Lưu).</p>
+        </div>
 
         <div class="vb-field">
           <label>File ngữ cảnh đang dùng (.txt, .md, .json, .csv, .docx)</label>
           <div class="vb-row">
             <label class="vb-btn vb-btn-primary" for="vb-ctx-file">+ Chọn file</label>
             <input type="file" id="vb-ctx-file" accept=".txt,.md,.json,.csv,.docx,text/plain" multiple hidden>
-            <button class="vb-btn vb-btn-danger" id="vb-ctx-clear-files">Xoá hết file</button>
+            <button type="button" class="vb-btn vb-btn-danger" id="vb-ctx-clear-files">Xoá hết file</button>
             <span class="vb-hint" id="vb-ctx-count"></span>
           </div>
           <div id="vb-ctx-files" class="vb-filelist"></div>
         </div>
       </section>
 
-      <section class="vb-pane" data-pane="bi">
+      <section class="vb-pane" role="tabpanel" data-pane="bi">
         <label class="vb-inline vb-strong"><input type="checkbox" id="vb-bi-enabled"> Bật chế độ song ngữ (chèn dòng gốc dưới mỗi lời thoại)</label>
         <label class="vb-inline"><input type="checkbox" id="vb-bi-sfx"> Yêu cầu AI gắn nhãn SFX vào bản dịch</label>
         <div class="vb-grid2">
-          <div class="vb-field"><label>Ký tự đứng trước dòng gốc</label><input type="text" id="vb-bi-marker" maxlength="4"></div>
-          <div class="vb-field"><label>Nhãn SFX</label><input type="text" id="vb-bi-sfxtag" maxlength="12"></div>
+          <div class="vb-field"><label for="vb-bi-marker">Ký tự đứng trước dòng gốc</label><input type="text" id="vb-bi-marker" maxlength="4"></div>
+          <div class="vb-field"><label for="vb-bi-sfxtag">Nhãn SFX</label><input type="text" id="vb-bi-sfxtag" maxlength="12"></div>
         </div>
         <pre class="vb-sample">Cậu đang làm gì thế?
 *何してるの？
@@ -221,41 +236,81 @@
 (sfx) Rầm!
 *(sfx) ドォン</pre>
         <div class="vb-row">
-          <button class="vb-btn vb-btn-primary" id="vb-bi-build">Tạo bản song ngữ từ 2 bảng tổng hợp</button>
-          <button class="vb-btn" id="vb-bi-copy">Copy</button>
-          <button class="vb-btn" id="vb-bi-txt">Xuất .txt</button>
-          <button class="vb-btn" id="vb-bi-docx">Xuất .docx</button>
+          <button type="button" class="vb-btn vb-btn-primary" id="vb-bi-build">Tạo bản song ngữ từ 2 bảng tổng hợp</button>
+          <button type="button" class="vb-btn" id="vb-bi-copy">Copy</button>
+          <button type="button" class="vb-btn" id="vb-bi-txt">Xuất .txt</button>
+          <button type="button" class="vb-btn" id="vb-bi-docx">Xuất .docx</button>
         </div>
         <textarea id="vb-bi-out" rows="14" placeholder="Kết quả song ngữ sẽ hiện ở đây…"></textarea>
       </section>
     </div>
 
     <div class="vb-modal-foot">
-      <span class="vb-hint" id="vb-save-hint"></span>
+      <span class="vb-dirty" id="vb-dirty" hidden>● Chưa lưu</span>
+      <span class="vb-hint" id="vb-save-hint" aria-live="polite"></span>
       <span class="vb-spacer"></span>
-      <button class="vb-btn" id="vb-reset">Khôi phục mặc định</button>
-      <button class="vb-btn vb-btn-primary" id="vb-save">Lưu</button>
+      <button type="button" class="vb-btn vb-btn-danger" id="vb-reset">Khôi phục mặc định</button>
+      <button type="button" class="vb-btn" id="vb-cancel">Đóng</button>
+      <button type="button" class="vb-btn vb-btn-primary" id="vb-save">Lưu</button>
     </div>
   </div>
 </div>`;
 
+  let dirty = false;
+  let cssHealed = false;
+  let studioCache = [];
+
+  const setDirty = v => { dirty = !!v; const el = $('vb-dirty'); if (el) el.hidden = !dirty; };
+
+  /** Nếu CSS của hộp thoại chưa áp dụng (cache cũ / chưa deploy), nạp lại vb-extra.css kèm tham số chống cache. */
+  function ensureCss() {
+    const m = $('vb-modal');
+    if (!m || cssHealed) return;
+    if (getComputedStyle(m).position === 'fixed') return;
+    cssHealed = true;
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = 'vb-extra.css?v=' + Date.now();
+    document.head.appendChild(link);
+    console.warn('[VB-UI] vb-extra.css chưa áp dụng cho hộp thoại — đã nạp lại bản mới.');
+  }
+
+  function ensureViewport() {
+    if (document.querySelector('meta[name="viewport"]')) return;
+    const m = document.createElement('meta');
+    m.name = 'viewport'; m.content = 'width=device-width, initial-scale=1';
+    document.head.appendChild(m);
+  }
+
+  /** Chặn trình duyệt bật popup autofill / trình quản lý mật khẩu trên ô API key. */
+  function hardenKeyInput() {
+    const nk = $('api-key-input');
+    if (!nk) return;
+    nk.setAttribute('autocomplete', 'new-password');
+    nk.setAttribute('data-lpignore', 'true');
+    nk.setAttribute('data-1p-ignore', '');
+    nk.setAttribute('data-form-type', 'other');
+  }
+
   function mount() {
+    ensureViewport();
     const holder = document.createElement('div');
     holder.innerHTML = MODAL_HTML;
     document.body.appendChild(holder.firstElementChild);
+    ensureCss();
+    hardenKeyInput();
 
-    const isStudio = document.body.classList.contains('vb-studio-page');
     const bar = document.querySelector('.topbar-controls') || document.querySelector('.topbar') || document.body;
     const wrap = document.createElement('div');
     wrap.className = 'field vb-topbar-field';
     wrap.innerHTML = '<label>Mở rộng</label><div class="vb-topbar-btns">' +
-      '<button type="button" class="btn btn-secondary" id="vb-open">⚙ Nâng cao</button>' +
-      '<button type="button" class="btn btn-secondary" id="vb-goto">' + (isStudio ? '← Trang chính' : '🧰 Studio') + '</button>' +
-      '<span class="vb-hookstatus" id="vb-hook-status"></span></div>';
+      '<button type="button" class="btn btn-secondary" id="vb-open" aria-haspopup="dialog">⚙ Nâng cao</button>' +
+      '<button type="button" class="btn btn-secondary" id="vb-goto">🧰 Studio</button>' +
+      '<span class="vb-hookstatus" id="vb-hook-status" aria-live="polite"></span></div>';
     bar.appendChild(wrap);
     hookStatusEl = $('vb-hook-status');
     $('vb-open').addEventListener('click', open);
-    $('vb-goto').addEventListener('click', () => { location.href = isStudio ? 'index.html' : 'studio.html'; });
+    $('vb-goto').addEventListener('click', () => { location.href = 'studio.html'; });
 
     bindKeys();
     bindContext();
@@ -263,31 +318,94 @@
     $('vb-save').addEventListener('click', saveAll);
     $('vb-reset').addEventListener('click', () => {
       if (!confirm('Khôi phục toàn bộ cấu hình mở rộng về mặc định?')) return;
-      VB.resetAll(); fillForm(); renderFiles(); note('Đã khôi phục mặc định');
+      VB.resetAll(); fillForm(); renderFiles(); renderStudioList(); note('Đã khôi phục mặc định');
     });
 
-    $('vb-close').addEventListener('click', close);
-    $('vb-modal').addEventListener('click', e => { if (e.target === $('vb-modal')) close(); });
-    document.querySelectorAll('.vb-tab').forEach(tab => {
-      tab.addEventListener('click', e => {
-        document.querySelectorAll('.vb-tab').forEach(t => t.classList.remove('is-active'));
-        document.querySelectorAll('.vb-pane').forEach(p => p.classList.remove('is-active'));
-        const target = e.currentTarget;
-        target.classList.add('is-active');
-        const pane = document.querySelector('.vb-pane[data-pane="' + target.dataset.tab + '"]');
-        if (pane) pane.classList.add('is-active');
-      });
+    $('vb-close').addEventListener('click', requestClose);
+    $('vb-cancel').addEventListener('click', requestClose);
+    $('vb-modal').addEventListener('mousedown', e => { if (e.target === $('vb-modal')) requestClose(); });
+
+    // đánh dấu "chưa lưu" khi sửa các trường cấu hình
+    const markDirty = e => { if (e.target.matches && e.target.matches(DIRTY_SEL)) setDirty(true); };
+    $('vb-modal').addEventListener('input', markDirty);
+    $('vb-modal').addEventListener('change', markDirty);
+
+    // tab
+    document.querySelectorAll('#vb-modal .vb-tab').forEach(tab => {
+      tab.addEventListener('click', () => selectTab(tab.dataset.tab));
+    });
+    $('vb-tabs').addEventListener('keydown', e => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      const tabs = Array.from(document.querySelectorAll('#vb-modal .vb-tab'));
+      const i = tabs.findIndex(t => t.classList.contains('is-active'));
+      const next = tabs[(i + (e.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length];
+      selectTab(next.dataset.tab, true);
+    });
+
+    // phím tắt: Esc đóng, Tab không thoát khỏi hộp
+    document.addEventListener('keydown', e => {
+      const m = $('vb-modal');
+      if (!m || m.hidden) return;
+      if (e.key === 'Escape') { e.preventDefault(); requestClose(); }
+      else if (e.key === 'Tab') trapTab(e);
     });
 
     fillForm();
     renderFiles();
+    renderStudioList();
     importNativeKey();
     setInterval(renderKeyStatus, 1500);
   }
 
-  const note = t => { const el = $('vb-save-hint'); if (el) { el.textContent = t; setTimeout(() => { if (el.textContent === t) el.textContent = ''; }, 2600); } };
-  function open() { fillForm(); renderFiles(); renderKeyStatus(); $('vb-modal').hidden = false; }
-  function close() { $('vb-modal').hidden = true; }
+  function selectTab(name, focus) {
+    document.querySelectorAll('#vb-modal .vb-tab').forEach(t => {
+      const on = t.dataset.tab === name;
+      t.classList.toggle('is-active', on);
+      t.setAttribute('aria-selected', on ? 'true' : 'false');
+      t.tabIndex = on ? 0 : -1;
+      if (on && focus) t.focus();
+    });
+    document.querySelectorAll('#vb-modal .vb-pane').forEach(p => p.classList.toggle('is-active', p.dataset.pane === name));
+  }
+
+  function trapTab(e) {
+    const box = document.querySelector('#vb-modal .vb-modal');
+    if (!box) return;
+    const items = Array.from(box.querySelectorAll('button,input,select,textarea,[tabindex]'))
+      .filter(el => !el.disabled && el.tabIndex >= 0 && el.offsetParent !== null);
+    if (!items.length) return;
+    const first = items[0], last = items[items.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  }
+
+  const note = t => {
+    const el = $('vb-save-hint');
+    if (!el) return;
+    el.textContent = t;
+    setTimeout(() => { if (el.textContent === t) el.textContent = ''; }, 2600);
+  };
+
+  function open() {
+    ensureCss();
+    fillForm(); renderFiles(); renderStudioList();
+    $('vb-key-text').classList.add('vb-masked');
+    $('vb-modal').hidden = false;
+    document.body.classList.add('vb-lock');
+    renderKeyStatus();
+    const t = document.querySelector('#vb-modal .vb-tab.is-active');
+    if (t) t.focus();
+  }
+  function close() {
+    $('vb-modal').hidden = true;
+    document.body.classList.remove('vb-lock');
+    const b = $('vb-open'); if (b) b.focus();
+  }
+  function requestClose() {
+    if (dirty && !confirm('Có thay đổi chưa lưu. Đóng mà không lưu?')) return;
+    setDirty(false);
+    close();
+  }
 
   // ---- keys ----
   const keyLines = () => VB.parseKeys($('vb-key-text').value);
@@ -312,6 +430,7 @@
         } catch (err) { alert('Không đọc được ' + f.name + ': ' + err.message); }
       }
       updateKeyCount();
+      if (added) setDirty(true);
       note(added ? ('Đã nhập thêm ' + added + ' key từ file') : 'Không tìm thấy key hợp lệ trong file');
       e.target.value = '';
     });
@@ -324,6 +443,7 @@
         VB.parseKeys(txt).forEach(k => { if (cur.indexOf(k) === -1) { cur.push(k); added++; } });
         ta.value = cur.join('\n');
         updateKeyCount();
+        if (added) setDirty(true);
         note('Đã dán thêm ' + added + ' key');
       } catch (e) { note('Trình duyệt chặn đọc clipboard — dán tay bằng Ctrl+V'); }
     });
@@ -332,8 +452,10 @@
       ta.classList.toggle('vb-masked');
       note(ta.classList.contains('vb-masked') ? 'Đã ẩn key' : 'Đang hiện key');
     });
-    $('vb-key-dedup').addEventListener('click', () => { ta.value = keyLines().join('\n'); updateKeyCount(); note('Đã lọc trùng'); });
-    $('vb-key-clear').addEventListener('click', () => { if (confirm('Xoá toàn bộ API key?')) { ta.value = ''; updateKeyCount(); } });
+    $('vb-key-dedup').addEventListener('click', () => { ta.value = keyLines().join('\n'); updateKeyCount(); setDirty(true); note('Đã lọc trùng'); });
+    $('vb-key-clear').addEventListener('click', () => {
+      if (confirm('Xoá toàn bộ API key?')) { ta.value = ''; updateKeyCount(); setDirty(true); }
+    });
 
     $('vb-key-test').addEventListener('click', async () => {
       const list = keyLines();
@@ -343,7 +465,7 @@
       let ok = 0; const bad = [];
       for (let i = 0; i < list.length; i++) {
         const r = await VB.testKey(list[i]);
-        if (r.ok) ok++; else bad.push('#' + (i + 1) + ' ' + VB.keyLabel(list[i]) + ' (' + (r.status || '') + ' ' + (r.message || '').slice(0, 40) + ')');
+        if (r.ok) ok++; else bad.push('#' + (i + 1) + ' ' + esc(VB.keyLabel(list[i])) + ' (' + (r.status || '') + ' ' + esc((r.message || '').slice(0, 40)) + ')');
         out.textContent = 'Đã kiểm tra ' + (i + 1) + '/' + list.length + ' · hợp lệ ' + ok;
       }
       out.innerHTML = '<b>' + ok + '/' + list.length + ' key hợp lệ.</b>' + (bad.length ? '<br>Lỗi: ' + bad.join('; ') : '');
@@ -355,7 +477,7 @@
     if (!el || $('vb-modal').hidden) return;
     const list = VB.keyStatusList();
     el.innerHTML = list.length
-      ? list.map(k => '<span class="vb-chip ' + (k.cooling ? 'cool' : 'ok') + '">' + k.label + ' · ' + k.used + ' lần' + (k.cooling ? (' · nghỉ ' + k.coolLeft + 's') : '') + '</span>').join('')
+      ? list.map(k => '<span class="vb-chip ' + (k.cooling ? 'cool' : 'ok') + '">' + esc(k.label) + ' · ' + k.used + ' lần' + (k.cooling ? (' · nghỉ ' + k.coolLeft + 's') : '') + '</span>').join('')
       : '<span class="vb-hint">Chưa có key nào được lưu.</span>';
   }
 
@@ -394,6 +516,47 @@
       if (!confirm('Xoá toàn bộ file ngữ cảnh đang dùng?')) return;
       VB.data.context.files = []; VB.save(); renderFiles();
     });
+    $('vb-ctx-studio-add').addEventListener('click', () => {
+      const c = studioCache[+$('vb-ctx-studio').value];
+      if (!c) return note('Chưa chọn bản nào');
+      const files = VB.data.context.files;
+      const old = files.find(f => f.name === c.name);
+      if (old) { old.text = c.text; old.size = c.text.length; old.enabled = true; }
+      else files.push({ name: c.name, size: c.text.length, enabled: true, text: c.text });
+      VB.save(); renderFiles();
+      note(old ? 'Đã cập nhật “' + c.name + '”' : 'Đã thêm “' + c.name + '”');
+    });
+  }
+
+  function studioContexts() {
+    const out = [];
+    try {
+      const cur = localStorage.getItem(STUDIO_CUR) || '';
+      if (cur.trim()) out.push({ name: 'Ngữ cảnh hiện hành của Studio', text: cur.trim() });
+    } catch (e) {}
+    try {
+      const lib = JSON.parse(localStorage.getItem(STUDIO_LIB) || '[]');
+      if (Array.isArray(lib)) lib.forEach(x => { if (x && x.text) out.push({ name: x.name || 'Không tên', text: String(x.text).trim() }); });
+    } catch (e) {}
+    return out;
+  }
+  function renderStudioList() {
+    const sel = $('vb-ctx-studio'), btn = $('vb-ctx-studio-add');
+    if (!sel) return;
+    studioCache = studioContexts();
+    sel.innerHTML = '';
+    if (!studioCache.length) {
+      sel.innerHTML = '<option value="">(Studio chưa có ngữ cảnh nào)</option>';
+      sel.disabled = true; btn.disabled = true;
+      return;
+    }
+    sel.disabled = false; btn.disabled = false;
+    studioCache.forEach((c, i) => {
+      const o = document.createElement('option');
+      o.value = String(i);
+      o.textContent = c.name + ' · ' + c.text.length.toLocaleString('vi-VN') + ' ký tự';
+      sel.appendChild(o);
+    });
   }
 
   async function readContextFile(file) {
@@ -418,10 +581,10 @@
     files.forEach((f, i) => {
       const row = document.createElement('div');
       row.className = 'vb-fileitem';
-      row.innerHTML = '<label class="vb-inline"><input type="checkbox" ' + (f.enabled !== false ? 'checked' : '') + ' data-fi="' + i + '"> <b>' + f.name + '</b></label>' +
+      row.innerHTML = '<label class="vb-inline"><input type="checkbox" ' + (f.enabled !== false ? 'checked' : '') + ' data-fi="' + i + '"> <b>' + esc(f.name) + '</b></label>' +
         '<span class="vb-hint">' + (f.text || '').length.toLocaleString() + ' ký tự</span>' +
         '<span class="vb-spacer"></span>' +
-        '<button class="vb-btn vb-btn-icon" data-fdel="' + i + '" title="Xoá">✕</button>';
+        '<button type="button" class="vb-btn vb-btn-icon" data-fdel="' + i + '" title="Xoá" aria-label="Xoá file">✕</button>';
       box.appendChild(row);
     });
     box.onclick = e => {
@@ -512,6 +675,7 @@
     $('vb-bi-sfx').checked = d.bilingual.tagSfxInPrompt;
     $('vb-bi-marker').value = d.bilingual.marker;
     $('vb-bi-sfxtag').value = d.bilingual.sfxTag;
+    setDirty(false);
   }
 
   function saveAll() {
@@ -533,10 +697,19 @@
     d.bilingual.marker = $('vb-bi-marker').value || '*';
     d.bilingual.sfxTag = $('vb-bi-sfxtag').value || '(sfx)';
     VB.save();
+
+    // đồng bộ công tắc "Song ngữ" ngoài thanh công cụ (vb-inline.js)
+    const inl = $('vb-bi-inline');
+    if (inl && inl.checked !== d.bilingual.enabled) {
+      inl.checked = d.bilingual.enabled;
+      inl.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
     syncPrimaryKey();
     updateCount();
     updateKeyCount();
     renderKeyStatus();
+    setDirty(false);
     note('Đã lưu ✓ (' + d.apiKeys.length + ' key)');
   }
 
