@@ -5,6 +5,7 @@
  *  - Gọi models.list, lọc model sinh văn bản/nhìn ảnh, xếp MỚI NHẤT lên đầu
  *  - Cache 6 giờ, tự làm mới nền khi mở trang / đổi key / mỗi 6 giờ
  *  - Đổ vào #model-select (giữ "Other model...") và mọi select[data-model]
+ *  - Hiển thị gọn: chỉ tên model, chia nhóm Flash / Flash-Lite / Pro / Khác
  *  PHẢI nạp TRƯỚC renderer.js và vb-shared.js.
  * ========================================================================== */
 (function () {
@@ -13,10 +14,12 @@
   const API = 'https://generativelanguage.googleapis.com/v1beta';
   const LS = 'vb_models_sync_v2';
   const TTL = 6 * 3600 * 1000;
+  const UI_VER = 'g3';                         // đổi khi đổi cách hiển thị → buộc vẽ lại select
   const FALLBACK = ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3-flash-preview', 'gemini-3.5-flash-lite',
     'gemini-3.1-flash-lite', 'gemini-3.1-pro-preview', 'gemini-2.5-flash', 'gemini-2.5-flash-lite',
     'gemini-2.5-pro', 'gemini-flash-latest'];
   const EXCLUDE = /(tts|embedding|image|imagen|banana|live|veo|lyria|transcribe|translate|audio|robotics|computer-use|deep-research|antigravity|omni|aqa|guard|gemma|learnlm)/i;
+  const GROUP_NAMES = ['Flash', 'Flash-Lite', 'Pro', 'Khác'];
 
   function readCache() {
     try { const c = JSON.parse(localStorage.getItem(LS) || 'null'); if (c && Array.isArray(c.list) && c.list.length) return c; } catch (_) {}
@@ -35,6 +38,8 @@
       alias: /latest/i.test(id) ? 1 : 0
     };
   }
+  const groupOf = id => { const i = info(id); return i.alias ? 'Bí danh (luôn trỏ bản mới)' : GROUP_NAMES[i.tier]; };
+
   function sortList(arr) {
     return arr.sort((a, b) => {
       const x = info(a.id), y = info(b.id);
@@ -105,7 +110,7 @@
 
   function fillSelect(sel) {
     const main = sel.id === 'model-select';
-    const sig = LIST.map(m => m.id).join('|');
+    const sig = UI_VER + '|' + LIST.map(m => m.id).join('|');
     if (sel.dataset.vbmSig === sig) return;
     sel.dataset.vbmSig = sig;
     const custom = main ? sel.querySelector('option[value="__custom__"]') : null;
@@ -115,13 +120,18 @@
     try { remembered = !main && sel.id ? (localStorage.getItem('vbs_model_' + sel.id) || '') : ''; } catch (_) {}
 
     sel.innerHTML = '';
+    let og = null, last = '';
     LIST.forEach(m => {
+      const g = groupOf(m.id);
+      if (g !== last) { og = document.createElement('optgroup'); og.label = g; sel.appendChild(og); last = g; }
       const o = document.createElement('option');
       o.value = m.id;
-      o.textContent = m.label && m.label !== m.id ? `${m.id} — ${m.label}` : m.id;
-      sel.appendChild(o);
+      o.textContent = m.id;                                   // chỉ tên model → gọn, không bị cắt chữ
+      o.title = m.label && m.label !== m.id ? m.label : m.id;  // tên đầy đủ khi rê chuột
+      og.appendChild(o);
     });
     if (custom) sel.appendChild(custom);
+    sel.title = 'Danh sách tự đồng bộ theo API key';
 
     const has = v => !!v && LIST.some(m => m.id === v);
     let want = cur === '__custom__' && customInput ? customInput.value.trim() : cur;
