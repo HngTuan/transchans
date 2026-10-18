@@ -7,7 +7,6 @@
       window.dataLayer = window.dataLayer || [];
       function gtag(){dataLayer.push(arguments);}
       gtag('js', new Date());
-
       gtag('config', 'G-PVV4TNKK3M');
     </script>
     <meta charset="UTF-8">
@@ -15,8 +14,8 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://www.googletagmanager.com; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' https://generativelanguage.googleapis.com https://www.google-analytics.com https://*.google-analytics.com https://*.analytics.google.com https://www.google.com; img-src 'self' data: https://www.google-analytics.com https://www.google.com;">
     <title>VisionBox</title>
     <link rel="icon" href="icon.png" type="image/png">
-    <link rel="stylesheet" href="styles.css">
-    <link rel="stylesheet" href="vb-extra.css">
+    <link rel="stylesheet" href="styles.css?v=3">
+    <link rel="stylesheet" href="vb-extra.css?v=3">
 </head>
 <body>
 
@@ -24,16 +23,13 @@
   <div class="brand">
     <div class="brand-text">
       <h1>VisionBox</h1>
-      <span class="brand-sub" data-i18n="brand_sub">
-        Inspired by MoeTruyen • Customized by Maditor
-      </span>
+      <span class="brand-sub" data-i18n="brand_sub">Inspired by MoeTruyen • Customized by Maditor</span>
     </div>
   </div>
 
   <div class="topbar-controls">
     <div class="field vb-model-field">
       <label for="model-select" data-i18n="model_label">Model</label>
-      <!-- Danh sách model do vb-models.js tự đồng bộ theo API key -->
       <select id="model-select">
         <option value="gemini-3.1-flash-lite" selected>gemini-3.1-flash-lite</option>
         <option value="gemini-2.5-flash">gemini-2.5-flash</option>
@@ -43,18 +39,13 @@
       <input type="text" id="model-custom-input" placeholder="custom-model-name" style="display:none" />
     </div>
 
-    <!-- BẮT BUỘC PHẢI CÓ: renderer.js đọc 3 phần tử này lúc khởi động.
-         Thiếu chúng là renderer.js dừng giữa chừng → mất nút Webtoon/Manga và Japanese.
-         Để ẩn vì key được quản lý ở ⚙ Nâng cao → API Keys (vb-ui.js tự chép key đầu tiên vào đây).
-         Muốn hiện lại ô nhập key thì xoá thuộc tính hidden bên dưới. -->
+    <!-- renderer.js cần 3 phần tử này. Để ẩn vì key quản lý ở ⚙ Nâng cao. -->
     <div class="field vb-key-field" hidden>
       <label for="api-key-input" data-i18n="api_key_label">Gemini API Key</label>
       <div class="input-with-btn">
         <input type="password" id="api-key-input" autocomplete="new-password" spellcheck="false"
                placeholder="Enter API key from Google AI Studio" data-i18n="api_key_placeholder" data-i18n-placeholder />
-        <button type="button" id="toggle-key-btn" class="icon-btn" title="Show / hide">
-          <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></span>
-        </button>
+        <button type="button" id="toggle-key-btn" class="icon-btn" title="Show / hide">👁</button>
         <button type="button" id="get-key-btn" class="icon-btn"><span data-i18n="get_key">Get key</span></button>
       </div>
     </div>
@@ -65,7 +56,6 @@
   <div class="lang-bar-row">
     <div class="field">
       <label for="source-lang-select" data-i18n="source_lang_label">Source language</label>
-      <!-- renderer.js tự đổi danh sách theo Webtoon (Hàn/Anh/Trung) hoặc Manga (Nhật/Anh) -->
       <select id="source-lang-select">
         <option value="ko" data-i18n="lang_ko">Korean (한국어)</option>
         <option value="en" data-i18n="lang_en">English</option>
@@ -134,7 +124,6 @@
               <option value="light" data-i18n="light_mode">Light mode</option>
             </select>
           </div>
-
           <div class="field settings-field">
             <label for="lang-select">Language / Ngôn ngữ</label>
             <select id="lang-select">
@@ -142,14 +131,12 @@
               <option value="vi">Tiếng Việt</option>
             </select>
           </div>
-
           <div class="settings-divider"></div>
           <button type="button" id="replace-btn" class="btn btn-secondary settings-panel-btn" title="Find and replace (Ctrl+H)">
             <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
             <span data-i18n="replace">Replace</span>
             <span class="settings-shortcut-hint">Ctrl+H</span>
           </button>
-
           <div class="field settings-field">
             <label for="font-size-value" data-i18n="font_size_label">Font size (OCR &amp; Translation)</label>
             <div class="font-size-control">
@@ -162,14 +149,13 @@
               </button>
             </div>
           </div>
-
           <div class="settings-divider"></div>
           <button type="button" id="usage-btn" class="btn btn-secondary settings-panel-btn">
             <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg></span>
             <span data-i18n="api_usage">API usage</span>
           </button>
           <button type="button" id="view-logs-btn" class="btn btn-secondary settings-panel-btn">
-            <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg></span>
+            <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>
             <span data-i18n="view_logs">View logs</span>
           </button>
           <button type="button" id="about-btn" class="btn btn-secondary settings-panel-btn">
@@ -188,10 +174,10 @@
     <button id="selection-ocr-btn" class="btn btn-secondary" data-i18n="ocr_selected">OCR selected</button>
     <button id="selection-translate-btn" class="btn btn-secondary" data-i18n="translate_selected">Translate selected</button>
     <div class="refine-dropdown">
-      <button type="button" id="selection-refine-btn" class="btn btn-secondary refine-btn" title="Refine OCR or Translation for selected images" data-i18n="refine_selected">Refine selected</button>
+      <button type="button" id="selection-refine-btn" class="btn btn-secondary refine-btn" data-i18n="refine_selected">Refine selected</button>
       <div class="refine-menu refine-menu-up">
-        <button type="button" id="selection-refine-ocr-btn" class="refine-option" title="Re-scan bubble boundaries to fix split/merged lines" data-i18n="refine_ocr_selected">Refine OCR selected</button>
-        <button type="button" id="selection-refine-translate-btn" class="refine-option" title="Refine translation for selected images" data-i18n="refine_translate_selected">Refine Translation selected</button>
+        <button type="button" id="selection-refine-ocr-btn" class="refine-option" data-i18n="refine_ocr_selected">Refine OCR selected</button>
+        <button type="button" id="selection-refine-translate-btn" class="refine-option" data-i18n="refine_translate_selected">Refine Translation selected</button>
       </div>
     </div>
     <button id="selection-cancel-btn" class="btn btn-danger" data-i18n="deselect">Deselect</button>
@@ -217,27 +203,14 @@
       <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span>
     </button>
   </div>
-
   <div class="replace-bar-row replace-bar-row-options">
     <div class="replace-scope-group">
       <span class="replace-scope-label" data-i18n="search_in">Search in:</span>
-      <label class="replace-scope-chip">
-        <input type="checkbox" id="replace-scope-ocr" checked />
-        <span data-i18n="ocr">OCR</span>
-      </label>
-      <label class="replace-scope-chip">
-        <input type="checkbox" id="replace-scope-translation" checked />
-        <span data-i18n="translation">Translation</span>
-      </label>
+      <label class="replace-scope-chip"><input type="checkbox" id="replace-scope-ocr" checked /><span data-i18n="ocr">OCR</span></label>
+      <label class="replace-scope-chip"><input type="checkbox" id="replace-scope-translation" checked /><span data-i18n="translation">Translation</span></label>
     </div>
-    <label class="replace-scope-chip replace-case-chip">
-      <input type="checkbox" id="replace-whole-word" checked />
-      <span data-i18n="whole_word">Whole word</span>
-    </label>
-    <label class="replace-scope-chip">
-      <input type="checkbox" id="replace-case-sensitive" />
-      <span data-i18n="match_case">Match case</span>
-    </label>
+    <label class="replace-scope-chip replace-case-chip"><input type="checkbox" id="replace-whole-word" checked /><span data-i18n="whole_word">Whole word</span></label>
+    <label class="replace-scope-chip"><input type="checkbox" id="replace-case-sensitive" /><span data-i18n="match_case">Match case</span></label>
     <div class="replace-bar-actions">
       <button type="button" id="replace-one-btn" class="btn btn-secondary" data-i18n="replace_one">Replace</button>
       <button type="button" id="replace-all-btn" class="btn btn-primary" data-i18n="replace_all">Replace all</button>
@@ -318,9 +291,7 @@
         <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg></span>
       </span>
       <div class="nav-fab-progress">
-        <span class="nav-fab-progress-track">
-          <span id="batch-progress-fill" class="batch-progress-fill"></span>
-        </span>
+        <span class="nav-fab-progress-track"><span id="batch-progress-fill" class="batch-progress-fill"></span></span>
         <span class="nav-fab-progress-text"><span id="batch-current">0</span>/<span id="batch-total">0</span></span>
         <button type="button" id="batch-stop-btn" class="batch-stop-btn" title="Stop after current image">
           <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span>
@@ -364,16 +335,17 @@
   </div>
 </div>
 
-<script src="jszip.min.js"></script>
-<script src="preload.js"></script>
-<script src="strings.js"></script>
-<script src="style-guide.js"></script>
-<script src="vb-models.js"></script>
-<script src="renderer.js"></script>
-<script src="vb-core.js"></script>
-<script src="vb-ui.js"></script>
-<script src="vb-inline.js"></script>
-<script src="vb-format.js"></script>
-<script src="vb-studio.js"></script>
+<script src="jszip.min.js?v=3"></script>
+<script src="preload.js?v=3"></script>
+<script src="strings.js?v=3"></script>
+<script src="style-guide.js?v=3"></script>
+<script src="vb-models.js?v=3"></script>
+<script src="vb-dom-guard.js?v=3"></script>
+<script src="renderer.js?v=3"></script>
+<script src="vb-core.js?v=3"></script>
+<script src="vb-ui.js?v=3"></script>
+<script src="vb-inline.js?v=3"></script>
+<script src="vb-format.js?v=3"></script>
+<script src="vb-studio.js?v=3"></script>
 </body>
 </html>
