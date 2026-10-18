@@ -33,13 +33,17 @@
   <section class="vbs-card">
     <h2>2. Cấu hình dịch</h2>
     <div class="vbs-grid3">
-      <div class="vbs-field"><label>Model (tự đồng bộ) <span class="vbs-hint" id="b-modelinfo"></span></label><select id="b-model" data-model></select></div>
-      <div class="vbs-field"><label>Loại truyện</label><select id="b-type"><option value="manga">Manga (phải → trái)</option><option value="webtoon">Webtoon (trên → dưới)</option></select></div>
-      <div class="vbs-field"><label>Ngôn ngữ gốc</label><select id="b-src"><option value="ja">Japanese (日本語)</option><option value="ko">Korean (한국어)</option><option value="zh">Chinese (中文)</option><option value="en">English</option></select></div>
-      <div class="vbs-field"><label>Dịch sang</label><select id="b-dst"><option value="vi">Vietnamese</option><option value="en">English</option><option value="ja">Japanese</option><option value="ko">Korean</option><option value="zh">Chinese</option></select></div>
-      <div class="vbs-field"><label>Luồng song song</label><select id="b-conc"><option value="auto">Tự động (theo số key)</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="6">6</option></select></div>
-      <div class="vbs-field"><label>Nghỉ giữa 2 ảnh mỗi luồng (ms)</label><input type="number" id="b-delay" min="0" step="100" value="300"></div>
-      <div class="vbs-field"><label>Thu nhỏ ảnh về tối đa (px)</label><input type="number" id="b-width" min="600" step="100" value="1400"></div>
+      <div class="vbs-field">
+        <label for="b-model">Model <span class="vbs-hint">· tự đồng bộ</span></label>
+        <select id="b-model" data-model></select>
+        <span class="vbs-hint vbs-under" id="b-modelinfo"></span>
+      </div>
+      <div class="vbs-field"><label for="b-type">Loại truyện</label><select id="b-type"><option value="manga">Manga (phải → trái)</option><option value="webtoon">Webtoon (trên → dưới)</option></select></div>
+      <div class="vbs-field"><label for="b-src">Ngôn ngữ gốc</label><select id="b-src"><option value="ja">Japanese (日本語)</option><option value="ko">Korean (한국어)</option><option value="zh">Chinese (中文)</option><option value="en">English</option></select></div>
+      <div class="vbs-field"><label for="b-dst">Dịch sang</label><select id="b-dst"><option value="vi">Vietnamese</option><option value="en">English</option><option value="ja">Japanese</option><option value="ko">Korean</option><option value="zh">Chinese</option></select></div>
+      <div class="vbs-field"><label for="b-conc">Luồng song song</label><select id="b-conc"><option value="auto">Tự động (theo số key)</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="6">6</option></select></div>
+      <div class="vbs-field"><label for="b-delay">Nghỉ giữa 2 ảnh mỗi luồng (ms)</label><input type="number" id="b-delay" min="0" step="100" value="300"></div>
+      <div class="vbs-field"><label for="b-width">Thu nhỏ ảnh về tối đa (px)</label><input type="number" id="b-width" min="600" step="100" value="1400"></div>
     </div>
     <div class="vbs-row">
       <label class="vbs-inline"><input type="checkbox" id="b-skipsfx"> Bỏ qua SFX</label>
