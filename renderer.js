@@ -575,6 +575,24 @@ const isAppShortcut = allowedAppShortcuts.some(s =>
     showToast(styleGuideToggle.checked ? t('style_guide_on') : t('style_guide_off'), 'info', 2200);
   });
 
+  modelSelect.addEventListener('change', () => {
+    modelCustomInput.style.display = modelSelect.value === '__custom__' ? 'block' : 'none';
+    scheduleSaveConfig();
+  });
+  modelCustomInput.addEventListener('input', scheduleSaveConfig);
+
+  function getSelectedModel() {
+    if (modelSelect.value === '__custom__') {
+      return modelCustomInput.value.trim() || 'gemini-3.1-flash-lite';
+    }
+    return modelSelect.value;
+  }
+
+  if (toggleKeyBtn && apiKeyInput) {
+    toggleKeyBtn.addEventListener('click', () => {
+      apiKeyInput.type = apiKeyInput.type === 'password' ? 'text' : 'password';
+    });
+  }
 
   });
 
