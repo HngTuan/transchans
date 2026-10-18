@@ -354,7 +354,9 @@
     renderFiles();
     renderStudioList();
     importNativeKey();
+    syncPrimaryKey();          // chép key đầu tiên trong ⚙ Nâng cao → ô key (ẩn) của trang chính
     setInterval(renderKeyStatus, 1500);
+
   }
 
   function selectTab(name, focus) {
