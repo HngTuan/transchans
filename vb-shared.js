@@ -123,9 +123,7 @@
   VB.keyModal = keyModal;
 
   /* ========================== MODEL ========================== */
-  const PREFERRED = ['gemini-3.8-flash', 'gemini-3.5-flash', 'gemini-3.5-flash-lite',
-    'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-flash-latest',
-    'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.5-pro'];
+  const PREFERRED = (window.VBModels && window.VBModels.fallback) || ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'];
   const EXCLUDE = /(tts|embedding|image|imagen|live|veo|lyria|transcribe|robotics|computer-use|deep-research|guard|aqa)/i;
   let MODELS = null;
   const modelDead = new Set();
@@ -167,27 +165,27 @@
 
   async function fillModelSelect(sel, opts) {
     if (!sel) return '';
+    if (window.VBModels) {                       // đồng bộ tự động dùng chung toàn hệ thống
+      window.VBModels.fillAll();
+      await window.VBModels.sync(opts && opts.force);
+      MODELS = window.VBModels.list();
+      return `đã đồng bộ ${MODELS.length} model`;
+    }
     const remember = 'vbs_model_' + (sel.id || 'x');
-    const want = (opts && opts.prefer) || localStorage.getItem(remember) || '';
-    const put = (arr) => {
+    const want = localStorage.getItem(remember) || '';
+    const put = arr => {
       sel.innerHTML = '';
-      arr.forEach(mm => {
-        const o = document.createElement('option');
-        o.value = mm.id; o.textContent = mm.label && mm.label !== mm.id ? `${mm.id} — ${mm.label}` : mm.id;
-        sel.appendChild(o);
-      });
+      arr.forEach(mm => { const o = document.createElement('option'); o.value = mm.id; o.textContent = mm.id; sel.appendChild(o); });
       if (want && arr.some(x => x.id === want)) sel.value = want;
     };
-    put(PREFERRED.map(id => ({ id, label: '' })));
-    let note = '';
-    try { put(await discover(opts && opts.force)); note = `đã dò ${MODELS.length} model từ key của bạn`; }
-    catch (e) { note = 'chưa dò được: ' + e.message; }
+    put(PREFERRED.map(id => ({ id })));
+    try { put(await discover(opts && opts.force)); } catch (_) {}
     if (!sel._bound) { sel._bound = 1; sel.addEventListener('change', () => { try { localStorage.setItem(remember, sel.value); } catch (_) {} }); }
-    return note;
+    return '';
   }
 
   const candidates = (prefer) => {
-    const base = (MODELS || PREFERRED.map(id => ({ id }))).map(m => m.id);
+    const base = (window.VBModels ? window.VBModels.list() : (MODELS || PREFERRED.map(id => ({ id })))).map(m => m.id);
     const list = [];
     if (prefer && !modelDead.has(prefer)) list.push(prefer);
     base.forEach(id => { if (id !== prefer && !modelDead.has(id)) list.push(id); });
@@ -196,11 +194,12 @@
   VB.models = { discover, fill: fillModelSelect, candidates, preferred: PREFERRED, dead: modelDead };
 
   /* ========================== GỌI GEMINI ========================== */
+  const FEAT = { schema: true, thinking: true };
   function reqBody(parts, o) {
-    const b = {
-      contents: [{ role: 'user', parts }],
-      generationConfig: { temperature: o.temperature != null ? o.temperature : 0.35, topP: 0.95, maxOutputTokens: o.maxTokens || 8192 }
-    };
+    const g = { temperature: o.temperature != null ? o.temperature : 0.35, topP: 0.95, maxOutputTokens: o.maxTokens || 8192 };
+    if (o.json) { g.responseMimeType = 'application/json'; if (o.schema && FEAT.schema) g.responseSchema = o.schema; }
+    if (o.fast && FEAT.thinking) g.thinkingConfig = { thinkingBudget: 0 };
+    const b = { contents: [{ role: 'user', parts }], generationConfig: g };
     if (!o.noSafety) {
       b.safetySettings = ['HARM_CATEGORY_HARASSMENT', 'HARM_CATEGORY_HATE_SPEECH', 'HARM_CATEGORY_SEXUALLY_EXPLICIT', 'HARM_CATEGORY_DANGEROUS_CONTENT']
         .map(c => ({ category: c, threshold: 'BLOCK_NONE' }));
@@ -239,6 +238,9 @@
         if (res.status === 500 || res.status === 503) { penalize(key, 15000); lastErr = new Error('HTTP ' + res.status + ' (quá tải)'); await sleep(800 + t * 600); continue; }
         if (res.status === 401 || res.status === 403) { killKey(key); note(`Key ${mask(key)} bị từ chối (${res.status}): ${msg}`); lastErr = new Error(`HTTP ${res.status}: ${msg}`); continue; }
         if (res.status === 400) {
+          if (FEAT.thinking && /thinking/i.test(msg)) { FEAT.thinking = false; note('Model không hỗ trợ chế độ nhanh → tắt, gọi lại.'); continue; }
+          if (FEAT.schema && /schema|response_?mime/i.test(msg)) { FEAT.schema = false; note('Model không nhận schema → bỏ schema, gọi lại.'); continue; }
+
           if (!noSafety && /safety|BLOCK_NONE|threshold/i.test(msg)) { noSafety = true; note('Bỏ safetySettings rồi thử lại.'); continue; }
           if (/api[_ ]?key|invalid|credential/i.test(msg)) { killKey(key); note(`Key ${mask(key)} không hợp lệ: ${msg}`); lastErr = new Error('Key không hợp lệ: ' + msg); continue; }
           lastErr = new Error('HTTP 400: ' + msg); break;
