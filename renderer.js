@@ -1649,12 +1649,16 @@ Return ONLY the refined translation, one line per bubble, in the same order as a
       .replace(/\n\s*\n/g, '\n')
       .replace(/[ \t]{2,}/g, ' ')
       .trim();
+    // Trang không thoại: kiểm tra TRƯỚC stripEmptyLines (vì hàm đó xoá luôn chữ "[NO TEXT]")
+    if (isNoText(text)) return NO_TEXT_MARK;
     text = stripEmptyLines(text);
-    if (!text) throw new Error(t('cannot_extract'));
+    if (!text) return NO_TEXT_MARK; // không đọc được chữ nào → coi là trang không thoại, không báo lỗi
     return text;
   }
-  if (isNoText(imageData.ocrResult)) return NO_TEXT_MARK;
+
   async function runTranslate(imageData, itemIndex) {
+    // Trang không thoại: không gọi API dịch → tiết kiệm thời gian và lượt gọi
+    if (isNoText(imageData.ocrResult)) return NO_TEXT_MARK;
     const apiKey = getApiKey();
     if (!apiKey) throw new Error(t('missing_api_key'));
     const base64 = await shrinkForApi(imageData);
@@ -1663,10 +1667,12 @@ Return ONLY the refined translation, one line per bubble, in the same order as a
       apiKey, model: getSelectedModel(), promptText: prompt, base64Image: base64, temperature: 0.6, maxOutputTokens: 8192, itemIndex
     });
     text = text.replace(/^(Translation:|Translated text:|Here is the translation:)/i, '').trim();
+    if (isNoText(text)) return NO_TEXT_MARK;
     text = stripEmptyLines(text);
-    if (!text || isNoText(text)) return NO_TEXT_MARK; // trang không thoại: không báo lỗi, không dịch
+    if (!text) return NO_TEXT_MARK;
     return text;
   }
+
 
   // Neu anh dang o Edit mode (nguoi dung dang go tay sua o OCR/o dich ma
   // CHUA bam "Done" de luu), imageData.ocrResult/.translationResult van
