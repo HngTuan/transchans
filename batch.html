@@ -9,25 +9,23 @@
 <link rel="stylesheet" href="vb-extra.css">
 </head>
 <body>
-
 <header class="vbs-top">
-  <div>
-    <h1>VisionBox · Dịch hàng loạt</h1>
-    <p class="vbs-hint">Nạp zip → dịch cả bộ → xuất txt/docx/zip</p>
-  </div>
+  <div><h1>VisionBox · Dịch hàng loạt</h1><p class="vbs-hint">Nạp thư mục / zip / ảnh → dịch cả bộ → xuất txt/docx/zip</p></div>
 </header>
-
 <nav class="vbs-nav"></nav>
 
 <main class="vbs-main">
-
   <section class="vbs-card">
-    <h2>1. Nạp file ZIP</h2>
+    <h2>1. Nạp truyện</h2>
     <div class="vbs-drop" id="b-drop">
-      <p>Kéo &amp; thả file <b>.zip</b> vào đây, hoặc</p>
-      <label class="vbs-btn primary" for="b-zip">Chọn file .zip</label>
+      <p>Kéo &amp; thả <b>thư mục</b>, file <b>.zip</b> hoặc <b>ảnh</b> vào đây, hoặc</p>
+      <label class="vbs-btn primary" for="b-folder">📁 Chọn thư mục</label>
+      <input type="file" id="b-folder" webkitdirectory directory multiple hidden>
+      <label class="vbs-btn" for="b-zip">🗜 Chọn file .zip</label>
       <input type="file" id="b-zip" accept=".zip,application/zip" multiple hidden>
-      <p class="vbs-hint">Mỗi <b>folder</b> trong zip = 1 chương. Ảnh nằm ngoài folder gom vào chương “(gốc)”.</p>
+      <label class="vbs-btn" for="b-imgs">🖼 Chọn ảnh rời</label>
+      <input type="file" id="b-imgs" accept="image/*" multiple hidden>
+      <p class="vbs-hint">Mỗi <b>thư mục con</b> = 1 chương. Tool tự lọc chỉ lấy ảnh (jpg, png, webp, bmp, gif, avif) và sắp xếp theo số trang.</p>
     </div>
     <div id="b-zipinfo" class="vbs-hint"></div>
   </section>
@@ -35,66 +33,24 @@
   <section class="vbs-card">
     <h2>2. Cấu hình dịch</h2>
     <div class="vbs-grid3">
-      <div class="vbs-field">
-        <label>Model <span class="vbs-hint" id="b-modelinfo"></span></label>
-        <select id="b-model" data-model></select>
-      </div>
-      <div class="vbs-field">
-        <label>Loại truyện</label>
-        <select id="b-type">
-          <option value="manga">Manga (phải → trái)</option>
-          <option value="webtoon">Webtoon (trên → dưới)</option>
-        </select>
-      </div>
-      <div class="vbs-field">
-        <label>Ngôn ngữ gốc</label>
-        <select id="b-src">
-          <option value="ja">Japanese (日本語)</option>
-          <option value="ko">Korean (한국어)</option>
-          <option value="zh">Chinese (中文)</option>
-          <option value="en">English</option>
-        </select>
-      </div>
-      <div class="vbs-field">
-        <label>Dịch sang</label>
-        <select id="b-dst">
-          <option value="vi">Vietnamese</option>
-          <option value="en">English</option>
-          <option value="ja">Japanese</option>
-          <option value="ko">Korean</option>
-          <option value="zh">Chinese</option>
-        </select>
-      </div>
-      <div class="vbs-field">
-        <label>Luồng song song</label>
-        <select id="b-conc">
-          <option value="1">1 (an toàn nhất)</option>
-          <option value="2">2</option>
-          <option value="3">3</option>
-        </select>
-      </div>
-      <div class="vbs-field">
-        <label>Nghỉ giữa 2 ảnh (ms)</label>
-        <input type="number" id="b-delay" min="0" step="100" value="700">
-      </div>
-      <div class="vbs-field">
-        <label>Thu nhỏ ảnh về tối đa (px)</label>
-        <input type="number" id="b-width" min="600" step="100" value="1400">
-      </div>
+      <div class="vbs-field"><label>Model (tự đồng bộ) <span class="vbs-hint" id="b-modelinfo"></span></label><select id="b-model" data-model></select></div>
+      <div class="vbs-field"><label>Loại truyện</label><select id="b-type"><option value="manga">Manga (phải → trái)</option><option value="webtoon">Webtoon (trên → dưới)</option></select></div>
+      <div class="vbs-field"><label>Ngôn ngữ gốc</label><select id="b-src"><option value="ja">Japanese (日本語)</option><option value="ko">Korean (한국어)</option><option value="zh">Chinese (中文)</option><option value="en">English</option></select></div>
+      <div class="vbs-field"><label>Dịch sang</label><select id="b-dst"><option value="vi">Vietnamese</option><option value="en">English</option><option value="ja">Japanese</option><option value="ko">Korean</option><option value="zh">Chinese</option></select></div>
+      <div class="vbs-field"><label>Luồng song song</label><select id="b-conc"><option value="auto">Tự động (theo số key)</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="6">6</option></select></div>
+      <div class="vbs-field"><label>Nghỉ giữa 2 ảnh mỗi luồng (ms)</label><input type="number" id="b-delay" min="0" step="100" value="300"></div>
+      <div class="vbs-field"><label>Thu nhỏ ảnh về tối đa (px)</label><input type="number" id="b-width" min="600" step="100" value="1400"></div>
     </div>
-
     <div class="vbs-row">
       <label class="vbs-inline"><input type="checkbox" id="b-skipsfx"> Bỏ qua SFX</label>
       <label class="vbs-inline"><input type="checkbox" id="b-style" checked> Elements of Style</label>
       <label class="vbs-inline"><input type="checkbox" id="b-slice" checked> Tự cắt ảnh quá dài</label>
-      <label class="vbs-inline"><input type="checkbox" id="b-bi" checked> Xuất song ngữ</label>
-      <label class="vbs-inline"><input type="checkbox" id="b-ctx" checked> Dùng ngữ cảnh đã lưu</label>
-      <span class="vbs-hint" id="b-ctxinfo"></span>
+      <label class="vbs-inline"><input type="checkbox" id="b-bi" checked> Kèm dòng gốc</label>
+      <label class="vbs-inline" title="Giảm suy luận nội bộ của model → nhanh hơn rõ rệt"><input type="checkbox" id="b-fast" checked> ⚡ Chế độ nhanh</label>
     </div>
-
     <div class="vbs-row">
-      <button type="button" class="vbs-btn" id="b-refresh-models">↻ Nạp lại danh sách model</button>
-      <button type="button" class="vbs-btn" id="b-test">🔍 Kiểm tra key &amp; model</button>
+      <button type="button" class="vbs-btn primary" id="b-adv">⚙ Nâng cao (ngữ cảnh, song ngữ, key)</button>
+      <span class="vbs-hint" id="b-ctxinfo"></span>
     </div>
   </section>
 
@@ -104,18 +60,16 @@
       <button type="button" class="vbs-btn" id="b-all">Chọn tất cả</button>
       <button type="button" class="vbs-btn" id="b-none">Bỏ chọn</button>
       <button type="button" class="vbs-btn" id="b-invert">Đảo chọn</button>
+      <button type="button" class="vbs-btn danger" id="b-clear">Xoá danh sách</button>
       <input type="text" id="b-filter" class="vbs-filter" placeholder="Lọc theo tên chương…">
       <span class="vbs-sp"></span>
-      <button type="button" class="vbs-btn primary" id="b-start">▶ Bắt đầu dịch</button>
+      <button type="button" class="vbs-btn primary" id="b-start">▶ Bắt đầu / Chạy tiếp</button>
       <button type="button" class="vbs-btn danger" id="b-stop" disabled>■ Dừng</button>
     </div>
     <div class="vbs-progress"><div id="b-progress"></div></div>
     <div class="vbs-hint" id="b-status">Chưa nạp chương nào.</div>
     <div id="b-list" class="vbs-chapters"></div>
-    <details id="b-log-open" open>
-      <summary>Nhật ký dịch</summary>
-      <div id="b-log" class="vbs-log"></div>
-    </details>
+    <details id="b-log-open" open><summary>Nhật ký dịch</summary><div id="b-log" class="vbs-log"></div></details>
   </section>
 
   <section class="vbs-card">
@@ -123,16 +77,17 @@
     <div class="vbs-row">
       <button type="button" class="vbs-btn primary" id="b-zipall">⬇ Tải tất cả (.zip)</button>
       <button type="button" class="vbs-btn" id="b-copyall">Copy tất cả</button>
-      <span class="vbs-hint">Mỗi chương là 1 file .txt trong zip.</span>
+      <span class="vbs-hint">Mỗi chương 1 file .txt + file _TAT-CA.txt — cùng định dạng với trang chính.</span>
     </div>
     <div id="b-results" class="vbs-results"></div>
   </section>
-
 </main>
 
 <script src="jszip.min.js"></script>
 <script src="style-guide.js"></script>
+<script src="vb-models.js"></script>
 <script src="vb-shared.js"></script>
+<script src="vb-batch-adv.js"></script>
 <script src="vb-batch.js"></script>
 </body>
 </html>
