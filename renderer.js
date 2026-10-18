@@ -594,31 +594,7 @@ const isAppShortcut = allowedAppShortcuts.some(s =>
     });
   }
 
-  });
-
-  modelSelect.addEventListener('change', () => {
-    modelCustomInput.style.display = modelSelect.value === '__custom__' ? 'block' : 'none';
-    scheduleSaveConfig();
-  });
-  modelCustomInput.addEventListener('input', scheduleSaveConfig);
-
-  function getSelectedModel() {
-    if (modelSelect.value === '__custom__') {
-      return modelCustomInput.value.trim() || 'gemini-3.1-flash-lite';
-    }
-    return modelSelect.value;
-  }
-
-  // Có kiểm tra null: thiếu nút này trong HTML cũng không làm renderer.js dừng giữa chừng
-  if (toggleKeyBtn && apiKeyInput) {
-    toggleKeyBtn.addEventListener('click', () => {
-      apiKeyInput.type = apiKeyInput.type === 'password' ? 'text' : 'password';
-    });
-  }
-
-
   // ---------- dark mode / light mode ----------
-  // checked = dark mode (mac dinh, giao dien hien tai). Bo check = light mode.
   function applyTheme(isDark) {
     document.body.classList.toggle('light-theme', !isDark);
   }
@@ -627,15 +603,13 @@ const isAppShortcut = allowedAppShortcuts.some(s =>
     scheduleSaveConfig();
   });
 
-document.getElementById('lang-select').addEventListener('change', (e) => {
-  currentLang = e.target.value;
-  applyLanguage(currentLang); // Hàm này sẽ được viết ở bước 4
-  scheduleSaveConfig();
-});
+  document.getElementById('lang-select').addEventListener('change', (e) => {
+    currentLang = e.target.value;
+    applyLanguage(currentLang);
+    scheduleSaveConfig();
+  });
+
   // ---------- font size cua OCR + Translation (tung anh) va phan tong hop ----------
-  // Dung chung 1 gia tri (bien CSS --content-font-size) cho .line-text
-  // (OCR/Translation cua tung anh) va .summary-body (All OCR/All
-  // translations), dung nhu yeu cau "dung chung size voi nhau".
   const fontSizeDecreaseBtn = document.getElementById('font-size-decrease');
   const fontSizeIncreaseBtn = document.getElementById('font-size-increase');
   const fontSizeValueEl = document.getElementById('font-size-value');
@@ -656,18 +630,21 @@ document.getElementById('lang-select').addEventListener('change', (e) => {
   applyFontSize(FONT_SIZE_DEFAULT);
 
   // ---------- content type (Webtoon / Manga) - loc options cua source language ----------
+  // Bổ sung Japanese (ja) vào cả Webtoon và Manga để luôn chọn được tiếng Nhật ở mọi chế độ
   const SOURCE_LANG_OPTIONS = {
     webtoon: [
+      { value: 'ja', i18nKey: 'lang_ja' },
       { value: 'ko', i18nKey: 'lang_ko' },
-      { value: 'en', i18nKey: 'lang_en' },
-      { value: 'zh', i18nKey: 'lang_zh' }
+      { value: 'zh', i18nKey: 'lang_zh' },
+      { value: 'en', i18nKey: 'lang_en' }
     ],
     manga: [
       { value: 'ja', i18nKey: 'lang_manga_ja' },
-      { value: 'manga-en', i18nKey: 'lang_manga_en' }
+      { value: 'manga-en', i18nKey: 'lang_manga_en' },
+      { value: 'ko', i18nKey: 'lang_ko' },
+      { value: 'zh', i18nKey: 'lang_zh' }
     ]
   };
-
   function applyContentType(type, preferredValue) {
     const options = SOURCE_LANG_OPTIONS[type] || SOURCE_LANG_OPTIONS.webtoon;
     const currentValue = preferredValue ?? sourceLangSelect.value;
