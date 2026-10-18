@@ -287,7 +287,10 @@ function applyLanguage(lang) {
   scheduleSaveConfig();
 }
   const MAX_IMAGES = 100;
-  const API_DELAY_MS = 2500;
+  const API_DELAY_MS = 600; // vb-ui.js đã có cổng giãn cách tự thích nghi + xoay key, không cần chờ cứng 2.5s
+  const NO_TEXT_MARK = '[NO TEXT]';
+  const isNoText = s => /^\s*\[?\s*no[ _-]?text\s*\]?\s*$/i.test(String(s || ''));
+
 
 // Chặn toàn bộ phím tắt trình duyệt, chỉ cho phép các phím tắt ứng dụng
 document.addEventListener('keydown', (e) => {
@@ -1268,7 +1271,7 @@ SFX RULE (include, keep in true reading position):
 - If an SFX is too stylized to read with full confidence, still transcribe your best reading of it, prioritizing accuracy to the actual lettering over guessing a "typical" sound effect.`;
 
     const outro = `
-If a bubble/box truly has no legible text, skip that line entirely instead of writing a placeholder note/marker (such as "(blank)", "(empty)", "(bỏ trống)", "(để trống)", "(no text)"...).
+If the WHOLE page contains no readable text at all (pure artwork, blank page, or only SFX while SFX are excluded), output exactly: [NO TEXT]
 Return ONLY the scanned text lines. Do not add a title, numbering, or any explanation.`;
 
     if (sourceLang === 'ko') {
@@ -1512,6 +1515,21 @@ Return ONLY the refined translation, one line per bubble, in the same order as a
     hideRetryStopButton(index);
     showToast(t('retry_stopped'), 'info');
   }
+  const API_MAX_W = 1600;
+  async function shrinkForApi(imageData) {
+    if (imageData._apiB64) return imageData._apiB64;
+    const raw = imageData.dataUrl.split(',')[1];
+    try {
+      const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = imageData.dataUrl; });
+      if (img.naturalWidth <= API_MAX_W) { imageData._apiB64 = raw; return raw; }
+      const sc = API_MAX_W / img.naturalWidth, cv = document.createElement('canvas');
+      cv.width = API_MAX_W; cv.height = Math.round(img.naturalHeight * sc);
+      cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+      const out = cv.toDataURL('image/jpeg', 0.9).split(',')[1];
+      imageData._apiB64 = out.length < raw.length ? out : raw;
+    } catch (_) { imageData._apiB64 = raw; }
+    return imageData._apiB64;
+  }
 
   async function callGemini({ apiKey, model, promptText, base64Image, mimeType, temperature, maxOutputTokens, itemIndex }) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
@@ -1615,7 +1633,7 @@ Return ONLY the refined translation, one line per bubble, in the same order as a
   async function runOCR(imageData, itemIndex) {
     const apiKey = getApiKey();
     if (!apiKey) throw new Error(t('missing_api_key'));
-    const base64 = imageData.dataUrl.split(',')[1];
+    const base64 = await shrinkForApi(imageData);
     const prompt = buildOcrPrompt(sourceLangSelect.value, skipSfxToggle.checked);
     let text = await callGemini({
       apiKey, model: getSelectedModel(), promptText: prompt, base64Image: base64, temperature: 0.1, itemIndex
@@ -1628,18 +1646,18 @@ Return ONLY the refined translation, one line per bubble, in the same order as a
     if (!text) throw new Error(t('cannot_extract'));
     return text;
   }
-
+  if (isNoText(imageData.ocrResult)) return NO_TEXT_MARK;
   async function runTranslate(imageData, itemIndex) {
     const apiKey = getApiKey();
     if (!apiKey) throw new Error(t('missing_api_key'));
-    const base64 = imageData.dataUrl.split(',')[1];
+    const base64 = await shrinkForApi(imageData);
     const prompt = buildTranslatePrompt(imageData.ocrResult, sourceLangSelect.value, targetLangSelect.value);
     let text = await callGemini({
       apiKey, model: getSelectedModel(), promptText: prompt, base64Image: base64, temperature: 0.6, maxOutputTokens: 8192, itemIndex
     });
     text = text.replace(/^(Translation:|Translated text:|Here is the translation:)/i, '').trim();
     text = stripEmptyLines(text);
-    if (!text) throw new Error(t('translation_empty'));
+    if (!text || isNoText(text)) return NO_TEXT_MARK; // trang không thoại: không báo lỗi, không dịch
     return text;
   }
 
@@ -2726,7 +2744,7 @@ else {
         enableRefineOcrButton(i);
         updateSummary();
 
-        await sleep(API_DELAY_MS);
+        if (!isNoText(ocrText)) await sleep(API_DELAY_MS);
 
         const translatedText = await runTranslate(imageData, i);
         pushVersionBeforeChange(imageData, 'translation', translatedText);
