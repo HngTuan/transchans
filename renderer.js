@@ -566,12 +566,15 @@ const isAppShortcut = allowedAppShortcuts.some(s =>
 
   setInterval(performAutoSave, AUTO_SAVE_INTERVAL_MS);
 
-  [apiKeyInput, sourceLangSelect, targetLangSelect, skipSfxToggle, styleGuideToggle].forEach(el => {
+  [apiKeyInput, sourceLangSelect, targetLangSelect, skipSfxToggle, styleGuideToggle].filter(Boolean).forEach(el => {
     el.addEventListener('change', scheduleSaveConfig);
     el.addEventListener('input', scheduleSaveConfig);
-    styleGuideToggle.addEventListener('change', () => {
-      showToast(styleGuideToggle.checked ? t('style_guide_on') : t('style_guide_off'), 'info', 2200);
   });
+  // Gắn 1 lần duy nhất (trước đây nằm trong vòng lặp nên toast hiện 5 lần)
+  styleGuideToggle?.addEventListener('change', () => {
+    showToast(styleGuideToggle.checked ? t('style_guide_on') : t('style_guide_off'), 'info', 2200);
+  });
+
 
   });
 
@@ -588,9 +591,13 @@ const isAppShortcut = allowedAppShortcuts.some(s =>
     return modelSelect.value;
   }
 
-  toggleKeyBtn.addEventListener('click', () => {
-    apiKeyInput.type = apiKeyInput.type === 'password' ? 'text' : 'password';
-  });
+  // Có kiểm tra null: thiếu nút này trong HTML cũng không làm renderer.js dừng giữa chừng
+  if (toggleKeyBtn && apiKeyInput) {
+    toggleKeyBtn.addEventListener('click', () => {
+      apiKeyInput.type = apiKeyInput.type === 'password' ? 'text' : 'password';
+    });
+  }
+
 
   // ---------- dark mode / light mode ----------
   // checked = dark mode (mac dinh, giao dien hien tai). Bo check = light mode.
@@ -981,7 +988,7 @@ document.getElementById('lang-select').addEventListener('change', (e) => {
     }
   });
 
-getKeyBtn.addEventListener('click', async () => {
+getKeyBtn?.addEventListener('click', async () => {
   const url = 'https://aistudio.google.com/api-keys';
   try {
     // Gọi command Rust đã có sẵn
