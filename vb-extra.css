@@ -292,3 +292,12 @@ body:has(.vbs-main){
 @media (prefers-reduced-motion:reduce){
   *{animation:none!important;transition:none!important}
 }
+/* ---- batch: hộp ⚙ Nâng cao ---- */
+.vbs-advtabs{display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid var(--bd);padding-bottom:8px;margin-bottom:8px}
+.vbs-advtabs .vbs-tab{border:0;background:transparent;cursor:pointer;font:inherit}
+.vbs-pane{display:none}.vbs-pane.on{display:block}
+.vbs-list{display:flex;flex-direction:column;gap:6px;margin-top:6px;max-height:220px;overflow:auto}
+.vbs-item{display:flex;align-items:center;gap:10px;padding:6px 10px;background:var(--bg3);border:1px solid var(--bd);border-radius:8px;cursor:pointer}
+.vbs-item b{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+.vbs-item input{width:auto;accent-color:var(--acc)}
+.vbs-sample{margin:8px 0;padding:10px 12px;background:var(--bg);border:1px dashed var(--bd);border-radius:8px;font:12.5px/1.7 Consolas,ui-monospace,monospace;white-space:pre-wrap}
